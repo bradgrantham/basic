@@ -22,24 +22,82 @@ Slices through functionality
   * change variable
   * call function
   * control flow
-lexer - produce tokens
-    Tokens Tokenize(const std::string& line);
 parser - produce AST? for tokens
     AST parse(const Tokens& tokens); - ???
-        sin(a + b)
-        Tokenized to TOKEN/SIN LP IDENFITIFER/A OPERATOR/PLUS IDENTIFIER/B RP
-        SIN - push function SIN 
-        LP - push LP 
-        A - push identifier A
-        PLUS - push
-        A - push identifier B
-        RP - pop
 evaluate AST
     evaluate(AST, stack, variables, program)
     evaluate(AST, variables, program)
         evaluate(AST, stack(), variables, program)
     invoke functions
     store program
+
+vector<vector<KeywordOrOperator>> PrecedenceTable =
+{
+    // what about NOT and unary MINUS?
+    { POWER },
+    { MULTIPLY, DIVIDE, MODULO, },
+    { PLUS, MINUS, },
+    { LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, MORE_THAN_EQUAL },
+    { EQUALS, NOT_EQUAL},
+    { AND, OR },
+    { COMMA, SEMICOLON },
+    { COLON, }, // statements
+};
+
+// require OPEN_PAREN, then expressions separated by COMMA, then CLOSE_PAREN
+std::set<KeywordOrOperator> Functions =
+{
+    ABS,
+    ATN,
+    COS,
+    EXP,
+    INT,
+    LOG,
+    RND,
+    SGN,
+    SIN,
+    SQR,
+    TAN,
+    CHR,
+    LEFT,
+    RIGHT,
+    MID,
+    LEN,
+    STR,
+    TAB,
+};
+
+Control flow or reserved words
+    IF expression,
+    THEN statements,
+    ELSE statements,
+    FOR identifier EQUAL expression, TO expression, STEP expression
+    NEXT,
+    GOTO expression, GOSUB expression,
+    RETURN
+    END,
+    ON expression GOSUB list,
+    ON expression GOTO list,
+    DEF FN identifier OPEN_PAREN identifier list CLOSE_PAREN expression (using identifiers),
+    DIM identifier OPEN_PAREN INTEGER CLOSE_PAREN,
+    WAIT expression, // hundredths of a second
+    WIDTH expression, // ignore?
+    DATA list of expressions,
+    READ list of identifiers,
+    CLEAR
+    PRINT {;,,,expression} ... [;]
+    INPUT [STRING_LITERAL SEMICOLON] expression list
+
+Unknown
+    identifier EQUAL expression
+
+Leaves (no precedence)
+    IDENTIFIER
+    INTEGER
+    FLOAT
+    STRING_LITERAL
+    Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
+
 */
 
 enum class KeywordOrOperator
@@ -99,10 +157,13 @@ enum class KeywordOrOperator
     TAB,
     WAIT,
     DEF,
+    FN,
     CHR,
     WIDTH,
     CLEAR,
     ON,
+    READ,
+    DATA,
 };
 
 std::map<std::string, KeywordOrOperator> StringToKeywordOrOperatorMap =
@@ -161,10 +222,13 @@ std::map<std::string, KeywordOrOperator> StringToKeywordOrOperatorMap =
     {"TAB", KeywordOrOperator::TAB},
     {"WAIT", KeywordOrOperator::WAIT},
     {"DEF", KeywordOrOperator::DEF},
+    {"FN", KeywordOrOperator::FN},
     {"CHR$", KeywordOrOperator::CHR},
     {"WIDTH", KeywordOrOperator::WIDTH},
     {"CLEAR", KeywordOrOperator::CLEAR},
     {"ON", KeywordOrOperator::ON},
+    {"READ", KeywordOrOperator::READ},
+    {"DATA", KeywordOrOperator::DATA},
 };
 
 std::unordered_map<KeywordOrOperator, const char *> KeywordOrOperatorToStringMap =
@@ -223,10 +287,13 @@ std::unordered_map<KeywordOrOperator, const char *> KeywordOrOperatorToStringMap
     {KeywordOrOperator::TAB, "TAB"},
     {KeywordOrOperator::WAIT, "WAIT"},
     {KeywordOrOperator::DEF, "DEF"},
+    {KeywordOrOperator::FN, "FN"},
     {KeywordOrOperator::CHR, "CHR$"},
     {KeywordOrOperator::WIDTH, "WIDTH"},
     {KeywordOrOperator::CLEAR, "CLEAR"},
     {KeywordOrOperator::ON, "ON"},
+    {KeywordOrOperator::READ, "READ"},
+    {KeywordOrOperator::DATA, "DATA"},
 };
 
 enum class TokenType
@@ -238,6 +305,10 @@ enum class TokenType
     STRING_LITERAL,
     REMARK,  		 // Remark (comment) starting with REM keyword
 };
+
+typedef std::variant<std::string, int32_t, double> VariableValue;
+
+typedef std::map<std::string, VariableValue> VariableMap;
 
 class Token
 {
@@ -267,7 +338,7 @@ struct TokenizeError
 
 std::string str_toupper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c){ return std::toupper(c); } // correct
+                   [](unsigned char c){ return std::toupper(c); }
                   );
     return s;
 }
@@ -330,7 +401,7 @@ std::vector<Token> Tokenize(const std::string& line)
 
     for (int index = 0; index < line.size();)
     {
-        if(line.substr(index, 3) == "REM") {
+        if(str_toupper(line.substr(index, 3)) == "REM") {
             flush_pending();
             tokens.push_back(Token(TokenType::REMARK, line.substr(index + 3)));
             break;
@@ -385,7 +456,6 @@ std::vector<Token> Tokenize(const std::string& line)
 
     return tokens;
 }
-
 
 int main(int argc, char **argv)
 {
