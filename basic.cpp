@@ -507,7 +507,7 @@ Value Evaluate(const VariableReference& ref, const VariableMap& variables)
 }
 
 struct InvalidLValueError { };
-struct ExpectedNumberError { };
+struct TypeMismatchError { };
 
 struct ASTNode
 {
@@ -521,6 +521,78 @@ struct ASTNode
 typedef std::shared_ptr<ASTNode> ASTNodePtr;
 
 template <class Op>
+struct ASTNumberUnary : public ASTNode
+{
+    ASTNodePtr node;
+    Op op;
+    ASTNumberUnary(ASTNodePtr node, Op op) :
+        node(std::move(node)),
+        op(op)
+    {}
+    virtual Value evaluateR(VariableMap& variables) override
+    {
+        Value v = node->evaluateR(variables);
+        if(std::holds_alternative<std::string>(v)) {
+            throw TypeMismatchError();
+        }
+        if(std::holds_alternative<double>(v)) {
+            return op(std::get<double>(v));
+        } else {
+            return op(std::get<int32_t>(v));
+        }
+    }
+    virtual ~ASTNumberUnary() {}
+};
+
+template <class Op>
+struct ASTString1Param : public ASTNode
+{
+    ASTNodePtr node;
+    Op op;
+    ASTString1Param(ASTNodePtr node, Op op) :
+        node(std::move(node)),
+        op(op)
+    {}
+    virtual Value evaluateR(VariableMap& variables) override
+    {
+        Value v = node->evaluateR(variables);
+        if(!std::holds_alternative<std::string>(v)) {
+            throw TypeMismatchError();
+        }
+        return op(std::get<std::string>(v));
+    }
+    virtual ~ASTString1Param() {}
+};
+
+template <class Op>
+struct ASTString2Param : public ASTNode
+{
+    ASTNodePtr param1;
+    ASTNodePtr param2;
+    Op op;
+    ASTString2Param(ASTNodePtr param1, ASTNodePtr param2, Op op) :
+        param1(std::move(param1)),
+        param2(std::move(param2)),
+        op(op)
+    {}
+    virtual Value evaluateR(VariableMap& variables) override
+    {
+        Value value1 = param1->evaluateR(variables);
+        Value value2 = param2->evaluateR(variables);
+        if(!std::holds_alternative<std::string>(value1)) {
+            printf("value 1 not string\n");
+            throw TypeMismatchError();
+        }
+        if(!std::holds_alternative<std::int32_t>(value2)) {
+            printf("value 2 not int32_t\n");
+            throw TypeMismatchError();
+        }
+        return op(std::get<std::string>(value1), std::get<std::int32_t>(value2));
+    }
+    virtual ~ASTString2Param() {}
+};
+
+template <class Op>
 struct ASTBinary : public ASTNode
 {
     ASTNodePtr left;
@@ -529,17 +601,17 @@ struct ASTBinary : public ASTNode
     ASTBinary(ASTNodePtr left, ASTNodePtr right, Op op) :
         left(std::move(left)),
         right(std::move(right)),
-        op(std::move(op))
+        op(op)
     {}
     virtual Value evaluateR(VariableMap& variables) override
     {
         Value r = right->evaluateR(variables);
         Value l = left->evaluateR(variables);
         if(std::holds_alternative<std::string>(r)) {
-            throw ExpectedNumberError();
+            throw TypeMismatchError();
         }
         if(std::holds_alternative<std::string>(l)) {
-            throw ExpectedNumberError();
+            throw TypeMismatchError();
         }
         if(std::holds_alternative<double>(l) && std::holds_alternative<double>(r)) {
             return op(std::get<double>(l), std::get<double>(r));
@@ -553,36 +625,6 @@ struct ASTBinary : public ASTNode
     }
     virtual ~ASTBinary() {}
 };
-
-#if 0
-struct ASTMultiply : public ASTBinary
-{
-    ASTMultiply(ASTNodePtr left, ASTNodePtr right) :
-        ASTBinary(std::move(left), std::move(right))
-    {}
-    virtual Value evaluateR(VariableMap& variables) override
-    {
-        Value r = right->evaluateR(variables);
-        Value l = left->evaluateR(variables);
-        if(std::holds_alternative<std::string>(r)) {
-            throw ExpectedNumberError();
-        }
-        if(std::holds_alternative<std::string>(l)) {
-            throw ExpectedNumberError();
-        }
-        if(std::holds_alternative<double>(l) && std::holds_alternative<double>(r)) {
-            return std::get<double>(l) * std::get<double>(r);
-        } else if(std::holds_alternative<double>(l)) {
-            return std::get<double>(l) * std::get<int32_t>(r);
-        } else if(std::holds_alternative<double>(r)) {
-            return std::get<int32_t>(l) * std::get<double>(r);
-        } else {
-            return std::get<int32_t>(l) * std::get<int32_t>(r);
-        }
-    }
-    virtual ~ASTMultiply() {}
-};
-#endif
 
 struct ASTVariableInstance : public ASTNode
 {
@@ -611,6 +653,10 @@ struct ASTConstant : public ASTNode
     virtual ~ASTConstant() {}
 };
 
+ASTNodePtr Parse(const std::vector<Token>& tokens)
+{
+}
+
 std::string to_string(const Value& v)
 {
     if(std::holds_alternative<int32_t>(v)) {
@@ -629,12 +675,37 @@ int main(int argc, char **argv)
 
     VariableMap variables;
     variables["A"] = 123.0;
+    variables["B"] = "Hello World!";
 
-    auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
-    auto right = std::make_shared<ASTConstant>(100);
-    auto bin = ASTBinary(left, right, [](auto l, auto r){return r - l;});
-    auto result = bin.evaluateR(variables);
-    printf("%s\n", to_string(result).c_str());
+    {
+        auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
+        auto strun = ASTString1Param(node, [](auto v){return static_cast<int32_t>(v.size());});
+        auto result = strun.evaluateR(variables);
+        printf("%s\n", to_string(result).c_str());
+    }
+
+    {
+        auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
+        auto len = std::make_shared<ASTConstant>(5);
+        auto strun = ASTString2Param(node, len, [](auto v1, auto v2){return v1.substr(0, v2);});
+        auto result = strun.evaluateR(variables);
+        printf("%s\n", to_string(result).c_str());
+    }
+
+    {
+        auto node = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
+        auto un = ASTNumberUnary(node, [](auto v){return ! v;});
+        auto result = un.evaluateR(variables);
+        printf("%s\n", to_string(result).c_str());
+    }
+
+    {
+        auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
+        auto right = std::make_shared<ASTConstant>(100);
+        auto bin = ASTBinary(left, right, [](auto l, auto r){return r - l;});
+        auto result = bin.evaluateR(variables);
+        printf("%s\n", to_string(result).c_str());
+    }
 
     if(false) {
         std::set<std::string> identifiers;
@@ -656,7 +727,7 @@ int main(int argc, char **argv)
                 }
             } catch (const InvalidLValueError& e) {
                 printf("expected an l-value but none available\n");
-            } catch (const ExpectedNumberError& e) {
+            } catch (const TypeMismatchError& e) {
                 printf("expected a number, encountered a string\n");
             }
         }
