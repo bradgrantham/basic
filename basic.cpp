@@ -306,10 +306,6 @@ enum class TokenType
     REMARK,  		 // Remark (comment) starting with REM keyword
 };
 
-typedef std::variant<std::string, int32_t, double> VariableValue;
-
-typedef std::map<std::string, VariableValue> VariableMap;
-
 class Token
 {
     public:
@@ -457,53 +453,168 @@ std::vector<Token> Tokenize(const std::string& line)
     return tokens;
 }
 
+typedef std::variant<std::string, int32_t, double> Value;
+typedef std::variant<Value, std::vector<Value>> MultiValue;
+typedef std::map<std::string, MultiValue> VariableMap;
+// Vector is indices into dimensioned variables
+typedef std::pair<std::string, int> VariableReference;
+
+// XXX Cases that need VariableReference: INPUT, READ, left side of EQUALS
+
+Value Evaluate(const VariableReference& ref, const VariableMap& variables)
+{
+    auto iter = variables.find(ref.first);
+    if(iter == variables.end()) {
+        // throw a variable not found error
+    }
+    auto mvalue = iter->second;
+    if(std::holds_alternative<std::vector<Value>>(mvalue)) {
+        return std::get<std::vector<Value>>(mvalue)[ref.second];
+    }
+    return std::get<Value>(mvalue);
+}
+
+struct InvalidLValueError { };
+struct ExpectedNumberError { };
+
+struct ASTNode
+{
+    virtual Value evaluateR(VariableMap& variables) = 0;
+    virtual VariableReference evaluateL(VariableMap& variables) {
+        throw InvalidLValueError();
+    }
+    virtual ~ASTNode() {}
+};
+
+typedef std::shared_ptr<ASTNode> ASTNodePtr;
+
+struct ASTBinary : public ASTNode, public std::enable_shared_from_this<ASTBinary>
+{
+    ASTNodePtr left;
+    ASTNodePtr right;
+    ASTBinary(ASTNodePtr left, ASTNodePtr right) :
+        left(std::move(left)),
+        right(std::move(right))
+    {}
+    virtual ~ASTBinary() {}
+};
+
+struct ASTMultiply : public ASTBinary, public std::enable_shared_from_this<ASTMultiply>
+{
+    ASTMultiply(ASTNodePtr left, ASTNodePtr right) :
+        ASTBinary(std::move(left), std::move(right))
+    {}
+    virtual Value evaluateR(VariableMap& variables) override
+    {
+        Value r = right->evaluateR(variables);
+        Value l = left->evaluateR(variables);
+        if(std::holds_alternative<std::string>(r)) {
+            throw ExpectedNumberError();
+        }
+        if(std::holds_alternative<std::string>(l)) {
+            throw ExpectedNumberError();
+        }
+        if(std::holds_alternative<double>(l) && std::holds_alternative<double>(r)) {
+            return std::get<double>(l) * std::get<double>(r);
+        } else if(std::holds_alternative<double>(l)) {
+            return std::get<double>(l) * std::get<int32_t>(r);
+        } else if(std::holds_alternative<double>(r)) {
+            return std::get<int32_t>(l) * std::get<double>(r);
+        } else {
+            return std::get<int32_t>(l) * std::get<int32_t>(r);
+        }
+    }
+    virtual ~ASTMultiply() {}
+};
+
+struct ASTVariableInstance : public ASTNode, public std::enable_shared_from_this<ASTVariableInstance>
+{
+    VariableReference ref;
+    ASTVariableInstance(const VariableReference& ref) :
+        ref(ref)
+    {}
+    virtual VariableReference evaluateL(VariableMap& variables) override {
+        return ref;
+    }
+    virtual Value evaluateR(VariableMap& variables) override {
+        return Evaluate(ref, variables);
+    }
+    virtual ~ASTVariableInstance() {}
+};
+
+struct ASTConstant : public ASTNode, public std::enable_shared_from_this<ASTConstant>
+{
+    Value val;
+    ASTConstant(const Value& val) :
+        val(val)
+    {}
+    virtual Value evaluateR(VariableMap& variables) override {
+        return val;
+    }
+    virtual ~ASTConstant() {}
+};
+
 int main(int argc, char **argv)
 {
     char line[1024];
     std::set<std::string> identifiers;
 
-    while(fgets(line, sizeof(line), stdin) != NULL) {
-        line[strlen(line) - 1] = '\0';
-        try {
-            auto tokens = Tokenize(line);
-            printf("%zd tokens: ", tokens.size());
-            for(const auto& t: tokens) {
-                auto v = t.value.value();
-                switch(t.type) {
-                    case TokenType::KEYWORD_OR_OPERATOR: {
-                        auto ko = std::get<KeywordOrOperator>(v);
-                        printf("%s ", KeywordOrOperatorToStringMap[ko]);
-                        break;
+    VariableMap variables;
+    variables["A"] = 123;
+    ASTNodePtr left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
+    ASTNodePtr right = std::make_shared<ASTConstant>(100);
+    auto mul = ASTMultiply(left, right); // XXX unique_ptr?
+    auto result = mul.evaluateR(variables);
+    printf("%d\n", std::get<int32_t>(result));
+
+    if(false) {
+        while(fgets(line, sizeof(line), stdin) != NULL) {
+            line[strlen(line) - 1] = '\0';
+            try {
+                auto tokens = Tokenize(line);
+                printf("%zd tokens: ", tokens.size());
+                for(const auto& t: tokens) {
+                    auto v = t.value.value();
+                    switch(t.type) {
+                        case TokenType::KEYWORD_OR_OPERATOR: {
+                            auto ko = std::get<KeywordOrOperator>(v);
+                            printf("%s ", KeywordOrOperatorToStringMap[ko]);
+                            break;
+                        }
+                        case TokenType::IDENTIFIER: {
+                            printf("%s ", std::get<std::string>(v).c_str());
+                            identifiers.insert(std::get<std::string>(v));
+                            break;
+                        }
+                        case TokenType::FLOAT:
+                            printf("%.f ", std::get<double>(v));
+                            break;
+                        case TokenType::INTEGER:
+                            printf("%d ", std::get<int32_t>(v));
+                            break;
+                        case TokenType::REMARK:
+                            printf("REM%s ", std::get<std::string>(v).c_str());
+                            break;
+                        case TokenType::STRING_LITERAL:
+                            printf("\"%s\" ", std::get<std::string>(v).c_str());
+                            break;
                     }
-                    case TokenType::IDENTIFIER: {
-                        printf("%s ", std::get<std::string>(v).c_str());
-                        identifiers.insert(std::get<std::string>(v));
-                        break;
-                    }
-                    case TokenType::FLOAT:
-                        printf("%.f ", std::get<double>(v));
-                        break;
-                    case TokenType::INTEGER:
-                        printf("%d ", std::get<int32_t>(v));
-                        break;
-                    case TokenType::REMARK:
-                        printf("REM%s ", std::get<std::string>(v).c_str());
-                        break;
-                    case TokenType::STRING_LITERAL:
-                        printf("\"%s\" ", std::get<std::string>(v).c_str());
-                        break;
                 }
-            }
-            printf("\n");
-        } catch (const TokenizeError& e) {
-            switch(e.type) {
-                case TokenizeError::SYNTAX:
-                    printf("syntax error at %d (\"%5s\")\n", e.position, line + e.position);
+                printf("\n");
+            } catch (const TokenizeError& e) {
+                switch(e.type) {
+                    case TokenizeError::SYNTAX:
+                        printf("syntax error at %d (\"%5s\")\n", e.position, line + e.position);
+                }
+            } catch (const InvalidLValueError& e) {
+                printf("expected an l-value but none available\n");
+            } catch (const ExpectedNumberError& e) {
+                printf("expected a number, encountered a string\n");
             }
         }
-    }
-    printf("identifiers:\n");
-    for(const auto& id: identifiers) {
-        printf("    %s\n", id.c_str());
+        printf("identifiers:\n");
+        for(const auto& id: identifiers) {
+            printf("    %s\n", id.c_str());
+        }
     }
 }
