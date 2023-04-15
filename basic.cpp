@@ -453,6 +453,38 @@ std::vector<Token> Tokenize(const std::string& line)
     return tokens;
 }
 
+void print_tokenized(const std::vector<Token>& tokens)
+{
+    printf("%zd tokens: ", tokens.size());
+    for(const auto& t: tokens) {
+        auto v = t.value.value();
+        switch(t.type) {
+            case TokenType::KEYWORD_OR_OPERATOR: {
+                auto ko = std::get<KeywordOrOperator>(v);
+                printf("%s ", KeywordOrOperatorToStringMap[ko]);
+                break;
+            }
+            case TokenType::IDENTIFIER: {
+                printf("%s ", std::get<std::string>(v).c_str());
+                break;
+            }
+            case TokenType::FLOAT:
+                printf("%.f ", std::get<double>(v));
+                break;
+            case TokenType::INTEGER:
+                printf("%d ", std::get<int32_t>(v));
+                break;
+            case TokenType::REMARK:
+                printf("REM%s ", std::get<std::string>(v).c_str());
+                break;
+            case TokenType::STRING_LITERAL:
+                printf("\"%s\" ", std::get<std::string>(v).c_str());
+                break;
+        }
+    }
+    printf("\n");
+}
+
 typedef std::variant<std::string, int32_t, double> Value;
 typedef std::variant<Value, std::vector<Value>> MultiValue;
 typedef std::map<std::string, MultiValue> VariableMap;
@@ -488,17 +520,41 @@ struct ASTNode
 
 typedef std::shared_ptr<ASTNode> ASTNodePtr;
 
+template <class Op>
 struct ASTBinary : public ASTNode
 {
     ASTNodePtr left;
     ASTNodePtr right;
-    ASTBinary(ASTNodePtr left, ASTNodePtr right) :
+    Op op;
+    ASTBinary(ASTNodePtr left, ASTNodePtr right, Op op) :
         left(std::move(left)),
-        right(std::move(right))
+        right(std::move(right)),
+        op(std::move(op))
     {}
+    virtual Value evaluateR(VariableMap& variables) override
+    {
+        Value r = right->evaluateR(variables);
+        Value l = left->evaluateR(variables);
+        if(std::holds_alternative<std::string>(r)) {
+            throw ExpectedNumberError();
+        }
+        if(std::holds_alternative<std::string>(l)) {
+            throw ExpectedNumberError();
+        }
+        if(std::holds_alternative<double>(l) && std::holds_alternative<double>(r)) {
+            return op(std::get<double>(l), std::get<double>(r));
+        } else if(std::holds_alternative<double>(l)) {
+            return op(std::get<double>(l), std::get<int32_t>(r));
+        } else if(std::holds_alternative<double>(r)) {
+            return op(std::get<int32_t>(l), std::get<double>(r));
+        } else {
+            return op(std::get<int32_t>(l), std::get<int32_t>(r));
+        }
+    }
     virtual ~ASTBinary() {}
 };
 
+#if 0
 struct ASTMultiply : public ASTBinary
 {
     ASTMultiply(ASTNodePtr left, ASTNodePtr right) :
@@ -526,6 +582,7 @@ struct ASTMultiply : public ASTBinary
     }
     virtual ~ASTMultiply() {}
 };
+#endif
 
 struct ASTVariableInstance : public ASTNode
 {
@@ -554,53 +611,49 @@ struct ASTConstant : public ASTNode
     virtual ~ASTConstant() {}
 };
 
+template <typename L, typename R>
+Value op_mul(const L& l, const R& r)
+{
+    return r * l;
+}
+
+std::string to_string(const Value& v)
+{
+    if(std::holds_alternative<int32_t>(v)) {
+        return std::to_string(std::get<int32_t>(v));
+    } else if(std::holds_alternative<double>(v)) {
+        return std::to_string(std::get<double>(v));
+    } else if(std::holds_alternative<std::string>(v)) {
+        return std::get<std::string>(v).c_str();
+    } else return "unknown"; // XXX variant should handle this for me.
+}
+
 int main(int argc, char **argv)
 {
     char line[1024];
     std::set<std::string> identifiers;
 
     VariableMap variables;
-    variables["A"] = 123;
+    variables["A"] = 123.0;
     auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
     auto right = std::make_shared<ASTConstant>(100);
-    auto mul = ASTMultiply(left, right);
-    auto result = mul.evaluateR(variables);
-    printf("%d\n", std::get<int32_t>(result));
+    auto bin = ASTBinary(left, right, [](auto l, auto r){return r - l;});
+    auto result = bin.evaluateR(variables);
+    printf("%s\n", to_string(result).c_str());
 
     if(false) {
+        std::set<std::string> identifiers;
         while(fgets(line, sizeof(line), stdin) != NULL) {
             line[strlen(line) - 1] = '\0';
             try {
                 auto tokens = Tokenize(line);
-                printf("%zd tokens: ", tokens.size());
-                for(const auto& t: tokens) {
-                    auto v = t.value.value();
-                    switch(t.type) {
-                        case TokenType::KEYWORD_OR_OPERATOR: {
-                            auto ko = std::get<KeywordOrOperator>(v);
-                            printf("%s ", KeywordOrOperatorToStringMap[ko]);
-                            break;
-                        }
-                        case TokenType::IDENTIFIER: {
-                            printf("%s ", std::get<std::string>(v).c_str());
-                            identifiers.insert(std::get<std::string>(v));
-                            break;
-                        }
-                        case TokenType::FLOAT:
-                            printf("%.f ", std::get<double>(v));
-                            break;
-                        case TokenType::INTEGER:
-                            printf("%d ", std::get<int32_t>(v));
-                            break;
-                        case TokenType::REMARK:
-                            printf("REM%s ", std::get<std::string>(v).c_str());
-                            break;
-                        case TokenType::STRING_LITERAL:
-                            printf("\"%s\" ", std::get<std::string>(v).c_str());
-                            break;
+                print_tokenized(tokens);
+                for(const auto& token: tokens) {
+                    if(token.type == TokenType::IDENTIFIER) {
+                        auto value = token.value.value();
+                        identifiers.insert(std::get<std::string>(value).c_str());
                     }
                 }
-                printf("\n");
             } catch (const TokenizeError& e) {
                 switch(e.type) {
                     case TokenizeError::SYNTAX:
@@ -613,8 +666,8 @@ int main(int argc, char **argv)
             }
         }
         printf("identifiers:\n");
-        for(const auto& id: identifiers) {
-            printf("    %s\n", id.c_str());
+        for(const auto &id: identifiers) {
+            printf("%s\n", id.c_str());
         }
     }
 }
