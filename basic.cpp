@@ -488,7 +488,7 @@ struct ASTNode
 
 typedef std::shared_ptr<ASTNode> ASTNodePtr;
 
-struct ASTBinary : public ASTNode, public std::enable_shared_from_this<ASTBinary>
+struct ASTBinary : public ASTNode
 {
     ASTNodePtr left;
     ASTNodePtr right;
@@ -499,7 +499,7 @@ struct ASTBinary : public ASTNode, public std::enable_shared_from_this<ASTBinary
     virtual ~ASTBinary() {}
 };
 
-struct ASTMultiply : public ASTBinary, public std::enable_shared_from_this<ASTMultiply>
+struct ASTMultiply : public ASTBinary
 {
     ASTMultiply(ASTNodePtr left, ASTNodePtr right) :
         ASTBinary(std::move(left), std::move(right))
@@ -527,7 +527,7 @@ struct ASTMultiply : public ASTBinary, public std::enable_shared_from_this<ASTMu
     virtual ~ASTMultiply() {}
 };
 
-struct ASTVariableInstance : public ASTNode, public std::enable_shared_from_this<ASTVariableInstance>
+struct ASTVariableInstance : public ASTNode
 {
     VariableReference ref;
     ASTVariableInstance(const VariableReference& ref) :
@@ -542,7 +542,7 @@ struct ASTVariableInstance : public ASTNode, public std::enable_shared_from_this
     virtual ~ASTVariableInstance() {}
 };
 
-struct ASTConstant : public ASTNode, public std::enable_shared_from_this<ASTConstant>
+struct ASTConstant : public ASTNode
 {
     Value val;
     ASTConstant(const Value& val) :
@@ -561,9 +561,9 @@ int main(int argc, char **argv)
 
     VariableMap variables;
     variables["A"] = 123;
-    ASTNodePtr left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
-    ASTNodePtr right = std::make_shared<ASTConstant>(100);
-    auto mul = ASTMultiply(left, right); // XXX unique_ptr?
+    auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
+    auto right = std::make_shared<ASTConstant>(100);
+    auto mul = ASTMultiply(left, right);
     auto result = mul.evaluateR(variables);
     printf("%d\n", std::get<int32_t>(result));
 
