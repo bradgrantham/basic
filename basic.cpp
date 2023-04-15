@@ -611,12 +611,6 @@ struct ASTConstant : public ASTNode
     virtual ~ASTConstant() {}
 };
 
-template <typename L, typename R>
-Value op_mul(const L& l, const R& r)
-{
-    return r * l;
-}
-
 std::string to_string(const Value& v)
 {
     if(std::holds_alternative<int32_t>(v)) {
@@ -635,6 +629,7 @@ int main(int argc, char **argv)
 
     VariableMap variables;
     variables["A"] = 123.0;
+
     auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
     auto right = std::make_shared<ASTConstant>(100);
     auto bin = ASTBinary(left, right, [](auto l, auto r){return r - l;});
