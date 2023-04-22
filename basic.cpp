@@ -11,6 +11,13 @@
 #include <set>
 
 /*
+Must figure out soon
+IDENTIFIER - different tokens for string and number IDENTIFIER?
+DEF FN A - should FN not be a reserved word, and just require all functions to start with "FN"?
+        FN_IDENTIFIER, NUMBER_IDENTIFIER, and STRING_IDENTIFIER?
+*/
+
+/*
   * identifiers
   * keywords - greedy
   * are functions keywords or identifiers?
@@ -22,24 +29,14 @@ Slices through functionality
   * change variable
   * call function
   * control flow
-parser - produce AST? for tokens
-    AST parse(const Tokens& tokens); - ???
-evaluate AST
-    evaluate(AST, stack, variables, program)
-    evaluate(AST, variables, program)
-        evaluate(AST, stack(), variables, program)
-    invoke functions
-    store program
 
-make a multi-tree of Tokens iteratively
-Tree { Token token; std::vector<Token> left; std::vector<Token> right; };
 IDENTIFIER, INTEGER, FLOAT, STRING_LITERAL are all atoms, already tokenized
 Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
 * first token is an INTEGER - line is a program line, right is all statements
 * COLON
 * OPEN_PAREN - parse to next matching CLOSE_PAREN,
 * reserved words (what about multiple reserved words?)
-    DIM
+    DIM,
     LET,
     IF,
     THEN,
@@ -56,7 +53,7 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     INPUT,
     END,
     WAIT,
-    DEF FN
+    DEF, // But this is always followed by FN or in later basics INT, SNG, DBL, or STR
     WIDTH,
     CLEAR,
     READ,
@@ -100,7 +97,67 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     DIVIDE,
     POWER,
 
-vector<vector<KeywordOrOperator>> PrecedenceTable =
+// need separate string and number identifiers and expressions?
+line ::= INTEGER statement-list EOL | statement-list EOL
+statement-list = statement (COLON statement)*
+statement ::= PRINT (COMMA | SEMICOLON | expression)*
+              [LET] variable-reference EQUAL expression
+              INPUT [STRING_LITERAL SEMICOLON] variable-reference (COMMA | variable-reference)*
+              DIM IDENTIFIER OPEN_PAREN INTEGER CLOSE_PAREN
+              IF expression THEN (INTEGER | statement) [ELSE statement]
+              FOR IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers?
+              NEXT [IDENTIFIER]
+              ...
+              ON numeric-expression (GOTO | GOSUB) INTEGER (COMMA INTEGER)*
+              GOTO INTEGER
+              GOSUB INTEGER
+              RETURN
+              END
+              CLEAR
+              WAIT numeric-expression
+              WIDTH numeric-expression
+              READ variable-reference
+              DATA expression (COMMA expression)*
+              DEF FN IDENTIFIER OPEN_PAREN IDENTIFIER (COMMA IDENTIFIER)* CLOSE_PAREN expression
+variable-reference ::= IDENTIFIER [OPEN_PAREN numeric-expression CLOSE_PAREN]
+expression ::= OPEN_PAREN expression CLOSE_PAREN | STRING_LITERAL | numeric-expression | function
+function ::= ABS OPEN_PAREN numeric-expression CLOSE_PAREN
+             ATN OPEN_PAREN numeric-expression CLOSE_PAREN
+             COS OPEN_PAREN numeric-expression CLOSE_PAREN
+             EXP OPEN_PAREN numeric-expression CLOSE_PAREN
+             INT OPEN_PAREN numeric-expression CLOSE_PAREN
+             LOG OPEN_PAREN numeric-expression CLOSE_PAREN
+             RND OPEN_PAREN numeric-expression CLOSE_PAREN
+             SGN OPEN_PAREN numeric-expression CLOSE_PAREN
+             SIN OPEN_PAREN numeric-expression CLOSE_PAREN
+             SQR OPEN_PAREN numeric-expression CLOSE_PAREN
+             TAN OPEN_PAREN numeric-expression CLOSE_PAREN
+             TAB OPEN_PAREN numeric-expression CLOSE_PAREN
+             CHR OPEN_PAREN numeric-expression CLOSE_PAREN
+             STR OPEN_PAREN numeric-expression CLOSE_PAREN
+             LEN OPEN_PAREN string-expression CLOSE_PAREN
+             LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+             RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+             MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
+numeric-expression ::= INTEGER | FLOAT | (unary-op numeric-expression) (binary-op | numeric-expression)*
+unary-op ::= (PLUS | MINUS | NOT)
+binary-op ::= PLUS
+              MINUS
+              MULTIPLY
+              DIVIDE
+              POWER
+              MODULO
+              LESS_THAN
+              GREATER_THAN
+              LESS_THAN_EQUAL
+              MORE_THAN_EQUAL
+              EQUALS
+              NOT_EQUAL
+              AND
+              OR
+number ::= (FLOAT | INTEGER)
+
+vector<vector<TokenType>> PrecedenceTable =
 {
     // what about NOT and unary MINUS?
     { POWER },
@@ -113,7 +170,7 @@ vector<vector<KeywordOrOperator>> PrecedenceTable =
 };
 
 // require OPEN_PAREN, then expressions separated by COMMA, then CLOSE_PAREN
-std::set<KeywordOrOperator> Functions =
+std::set<TokenType> Functions =
 {
     ABS,
     ATN,
@@ -163,9 +220,14 @@ COLON (statements)
 numbered lines
 */
 
-enum class KeywordOrOperator
+
+enum class TokenType
 {
-    NONE,
+    IDENTIFIER,
+    INTEGER,
+    FLOAT,
+    STRING_LITERAL,
+    REMARK,  		 // Remark (comment) starting with REM keyword
     DIM,
     LET,
     IF,
@@ -229,158 +291,151 @@ enum class KeywordOrOperator
     DATA,
 };
 
-std::unordered_map<std::string, KeywordOrOperator> StringToKeywordOrOperatorMap =
+std::unordered_map<std::string, TokenType> StringToToken =
 {
-    {"<>", KeywordOrOperator::NOT_EQUAL},
-    {"<=", KeywordOrOperator::LESS_THAN_EQUAL},
-    {">=", KeywordOrOperator::MORE_THAN_EQUAL},
-    {">", KeywordOrOperator::MORE_THAN_EQUAL},
-    {"<", KeywordOrOperator::LESS_THAN},
-    {"(", KeywordOrOperator::OPEN_PAREN},
-    {")", KeywordOrOperator::CLOSE_PAREN},
-    {"=", KeywordOrOperator::EQUAL},
-    {"+", KeywordOrOperator::PLUS},
-    {"-", KeywordOrOperator::MINUS},
-    {"*", KeywordOrOperator::MULTIPLY},
-    {"/", KeywordOrOperator::DIVIDE},
-    {"%", KeywordOrOperator::MODULO},
-    {"^", KeywordOrOperator::POWER},
-    {",", KeywordOrOperator::COMMA},
-    {":", KeywordOrOperator::COLON},
-    {";", KeywordOrOperator::SEMICOLON},
-    {"DIM", KeywordOrOperator::DIM},
-    {"LET", KeywordOrOperator::LET},
-    {"IF", KeywordOrOperator::IF},
-    {"THEN", KeywordOrOperator::THEN},
-    {"ELSE", KeywordOrOperator::ELSE},
-    {"FOR", KeywordOrOperator::FOR},
-    {"TO", KeywordOrOperator::TO},
-    {"STEP", KeywordOrOperator::STEP},
-    {"NEXT", KeywordOrOperator::NEXT},
-    {"GOTO", KeywordOrOperator::GOTO},
-    {"GOSUB", KeywordOrOperator::GOSUB},
-    {"RETURN", KeywordOrOperator::RETURN},
-    {"PRINT", KeywordOrOperator::PRINT},
-    {"INPUT", KeywordOrOperator::INPUT},
-    {"END", KeywordOrOperator::END},
-    {"ABS", KeywordOrOperator::ABS},
-    {"ATN", KeywordOrOperator::ATN},
-    {"COS", KeywordOrOperator::COS},
-    {"EXP", KeywordOrOperator::EXP},
-    {"INT", KeywordOrOperator::INT},
-    {"LOG", KeywordOrOperator::LOG},
-    {"RND", KeywordOrOperator::RND},
-    {"SGN", KeywordOrOperator::SGN},
-    {"SIN", KeywordOrOperator::SIN},
-    {"SQR", KeywordOrOperator::SQR},
-    {"TAN", KeywordOrOperator::TAN},
-    {"AND", KeywordOrOperator::AND},
-    {"OR", KeywordOrOperator::OR},
-    {"NOT", KeywordOrOperator::NOT},
-    {"LEFT$", KeywordOrOperator::LEFT},
-    {"RIGHT$", KeywordOrOperator::RIGHT},
-    {"MID$", KeywordOrOperator::MID},
-    {"STR$", KeywordOrOperator::STR},
-    {"LEN", KeywordOrOperator::LEN},
-    {"TAB", KeywordOrOperator::TAB},
-    {"WAIT", KeywordOrOperator::WAIT},
-    {"DEF", KeywordOrOperator::DEF},
-    {"FN", KeywordOrOperator::FN},
-    {"CHR$", KeywordOrOperator::CHR},
-    {"WIDTH", KeywordOrOperator::WIDTH},
-    {"CLEAR", KeywordOrOperator::CLEAR},
-    {"ON", KeywordOrOperator::ON},
-    {"READ", KeywordOrOperator::READ},
-    {"DATA", KeywordOrOperator::DATA},
+    {"<>", TokenType::NOT_EQUAL},
+    {"<=", TokenType::LESS_THAN_EQUAL},
+    {">=", TokenType::MORE_THAN_EQUAL},
+    {">", TokenType::MORE_THAN_EQUAL},
+    {"<", TokenType::LESS_THAN},
+    {"(", TokenType::OPEN_PAREN},
+    {")", TokenType::CLOSE_PAREN},
+    {"=", TokenType::EQUAL},
+    {"+", TokenType::PLUS},
+    {"-", TokenType::MINUS},
+    {"*", TokenType::MULTIPLY},
+    {"/", TokenType::DIVIDE},
+    {"%", TokenType::MODULO},
+    {"^", TokenType::POWER},
+    {",", TokenType::COMMA},
+    {":", TokenType::COLON},
+    {";", TokenType::SEMICOLON},
+    {"DIM", TokenType::DIM},
+    {"LET", TokenType::LET},
+    {"IF", TokenType::IF},
+    {"THEN", TokenType::THEN},
+    {"ELSE", TokenType::ELSE},
+    {"FOR", TokenType::FOR},
+    {"TO", TokenType::TO},
+    {"STEP", TokenType::STEP},
+    {"NEXT", TokenType::NEXT},
+    {"GOTO", TokenType::GOTO},
+    {"GOSUB", TokenType::GOSUB},
+    {"RETURN", TokenType::RETURN},
+    {"PRINT", TokenType::PRINT},
+    {"INPUT", TokenType::INPUT},
+    {"END", TokenType::END},
+    {"ABS", TokenType::ABS},
+    {"ATN", TokenType::ATN},
+    {"COS", TokenType::COS},
+    {"EXP", TokenType::EXP},
+    {"INT", TokenType::INT},
+    {"LOG", TokenType::LOG},
+    {"RND", TokenType::RND},
+    {"SGN", TokenType::SGN},
+    {"SIN", TokenType::SIN},
+    {"SQR", TokenType::SQR},
+    {"TAN", TokenType::TAN},
+    {"AND", TokenType::AND},
+    {"OR", TokenType::OR},
+    {"NOT", TokenType::NOT},
+    {"LEFT$", TokenType::LEFT},
+    {"RIGHT$", TokenType::RIGHT},
+    {"MID$", TokenType::MID},
+    {"STR$", TokenType::STR},
+    {"LEN", TokenType::LEN},
+    {"TAB", TokenType::TAB},
+    {"WAIT", TokenType::WAIT},
+    {"DEF", TokenType::DEF},
+    {"FN", TokenType::FN},
+    {"CHR$", TokenType::CHR},
+    {"WIDTH", TokenType::WIDTH},
+    {"CLEAR", TokenType::CLEAR},
+    {"ON", TokenType::ON},
+    {"READ", TokenType::READ},
+    {"DATA", TokenType::DATA},
 };
 
-std::unordered_map<KeywordOrOperator, const char *> KeywordOrOperatorToStringMap =
+std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
 {
-    {KeywordOrOperator::EQUAL, "="},
-    {KeywordOrOperator::NOT_EQUAL, "<>"},
-    {KeywordOrOperator::LESS_THAN_EQUAL, "<="},
-    {KeywordOrOperator::MORE_THAN_EQUAL, ">="},
-    {KeywordOrOperator::LESS_THAN, "<"},
-    {KeywordOrOperator::MORE_THAN, ">"},
-    {KeywordOrOperator::OPEN_PAREN, "("},
-    {KeywordOrOperator::CLOSE_PAREN, ")"},
-    {KeywordOrOperator::PLUS, "+"},
-    {KeywordOrOperator::MINUS, "-"},
-    {KeywordOrOperator::MULTIPLY, "*"},
-    {KeywordOrOperator::DIVIDE, "/"},
-    {KeywordOrOperator::MODULO, "%"},
-    {KeywordOrOperator::POWER, "^"},
-    {KeywordOrOperator::COMMA, ","},
-    {KeywordOrOperator::COLON, ":"},
-    {KeywordOrOperator::SEMICOLON, ";"},
-    {KeywordOrOperator::DIM, "DIM"},
-    {KeywordOrOperator::LET, "LET"},
-    {KeywordOrOperator::IF, "IF"},
-    {KeywordOrOperator::THEN, "THEN"},
-    {KeywordOrOperator::ELSE, "ELSE"},
-    {KeywordOrOperator::FOR, "FOR"},
-    {KeywordOrOperator::TO, "TO"},
-    {KeywordOrOperator::STEP, "STEP"},
-    {KeywordOrOperator::NEXT, "NEXT"},
-    {KeywordOrOperator::GOTO, "GOTO"},
-    {KeywordOrOperator::GOSUB, "GOSUB"},
-    {KeywordOrOperator::RETURN, "RETURN"},
-    {KeywordOrOperator::PRINT, "PRINT"},
-    {KeywordOrOperator::INPUT, "INPUT"},
-    {KeywordOrOperator::END, "END"},
-    {KeywordOrOperator::ABS, "ABS"},
-    {KeywordOrOperator::ATN, "ATN"},
-    {KeywordOrOperator::COS, "COS"},
-    {KeywordOrOperator::EXP, "EXP"},
-    {KeywordOrOperator::INT, "INT"},
-    {KeywordOrOperator::LOG, "LOG"},
-    {KeywordOrOperator::RND, "RND"},
-    {KeywordOrOperator::SGN, "SGN"},
-    {KeywordOrOperator::SIN, "SIN"},
-    {KeywordOrOperator::SQR, "SQR"},
-    {KeywordOrOperator::TAN, "TAN"},
-    {KeywordOrOperator::AND, "AND"},
-    {KeywordOrOperator::OR, "OR"},
-    {KeywordOrOperator::NOT, "NOT"},
-    {KeywordOrOperator::LEFT, "LEFT$"},
-    {KeywordOrOperator::RIGHT, "RIGHT$"},
-    {KeywordOrOperator::MID, "MID$"},
-    {KeywordOrOperator::STR, "STR$"},
-    {KeywordOrOperator::LEN, "LEN"},
-    {KeywordOrOperator::TAB, "TAB"},
-    {KeywordOrOperator::WAIT, "WAIT"},
-    {KeywordOrOperator::DEF, "DEF"},
-    {KeywordOrOperator::FN, "FN"},
-    {KeywordOrOperator::CHR, "CHR$"},
-    {KeywordOrOperator::WIDTH, "WIDTH"},
-    {KeywordOrOperator::CLEAR, "CLEAR"},
-    {KeywordOrOperator::ON, "ON"},
-    {KeywordOrOperator::READ, "READ"},
-    {KeywordOrOperator::DATA, "DATA"},
+    {TokenType::EQUAL, "="},
+    {TokenType::NOT_EQUAL, "<>"},
+    {TokenType::LESS_THAN_EQUAL, "<="},
+    {TokenType::MORE_THAN_EQUAL, ">="},
+    {TokenType::LESS_THAN, "<"},
+    {TokenType::MORE_THAN, ">"},
+    {TokenType::OPEN_PAREN, "("},
+    {TokenType::CLOSE_PAREN, ")"},
+    {TokenType::PLUS, "+"},
+    {TokenType::MINUS, "-"},
+    {TokenType::MULTIPLY, "*"},
+    {TokenType::DIVIDE, "/"},
+    {TokenType::MODULO, "%"},
+    {TokenType::POWER, "^"},
+    {TokenType::COMMA, ","},
+    {TokenType::COLON, ":"},
+    {TokenType::SEMICOLON, ";"},
+    {TokenType::DIM, "DIM"},
+    {TokenType::LET, "LET"},
+    {TokenType::IF, "IF"},
+    {TokenType::THEN, "THEN"},
+    {TokenType::ELSE, "ELSE"},
+    {TokenType::FOR, "FOR"},
+    {TokenType::TO, "TO"},
+    {TokenType::STEP, "STEP"},
+    {TokenType::NEXT, "NEXT"},
+    {TokenType::GOTO, "GOTO"},
+    {TokenType::GOSUB, "GOSUB"},
+    {TokenType::RETURN, "RETURN"},
+    {TokenType::PRINT, "PRINT"},
+    {TokenType::INPUT, "INPUT"},
+    {TokenType::END, "END"},
+    {TokenType::ABS, "ABS"},
+    {TokenType::ATN, "ATN"},
+    {TokenType::COS, "COS"},
+    {TokenType::EXP, "EXP"},
+    {TokenType::INT, "INT"},
+    {TokenType::LOG, "LOG"},
+    {TokenType::RND, "RND"},
+    {TokenType::SGN, "SGN"},
+    {TokenType::SIN, "SIN"},
+    {TokenType::SQR, "SQR"},
+    {TokenType::TAN, "TAN"},
+    {TokenType::AND, "AND"},
+    {TokenType::OR, "OR"},
+    {TokenType::NOT, "NOT"},
+    {TokenType::LEFT, "LEFT$"},
+    {TokenType::RIGHT, "RIGHT$"},
+    {TokenType::MID, "MID$"},
+    {TokenType::STR, "STR$"},
+    {TokenType::LEN, "LEN"},
+    {TokenType::TAB, "TAB"},
+    {TokenType::WAIT, "WAIT"},
+    {TokenType::DEF, "DEF"},
+    {TokenType::FN, "FN"},
+    {TokenType::CHR, "CHR$"},
+    {TokenType::WIDTH, "WIDTH"},
+    {TokenType::CLEAR, "CLEAR"},
+    {TokenType::ON, "ON"},
+    {TokenType::READ, "READ"},
+    {TokenType::DATA, "DATA"},
 };
 
-enum class TokenType
-{
-    KEYWORD_OR_OPERATOR,
-    IDENTIFIER,
-    INTEGER,
-    FLOAT,
-    STRING_LITERAL,
-    REMARK,  		 // Remark (comment) starting with REM keyword
-};
+typedef std::variant<std::string, int32_t, double> Value;
 
-class Token
+struct Token
 {
     public:
         TokenType type;
-        std::optional<std::variant<std::string, int32_t, double, KeywordOrOperator>> value;
+        std::optional<Value> value;
 
         Token(TokenType type) : type(type) {}
-        Token(TokenType type, KeywordOrOperator kwop) : type(type), value(kwop) {}
         Token(TokenType type, const std::string& value) : type(type), value(value) {}
         Token(int32_t value) : type(TokenType::INTEGER), value(value) {}
         Token(double value) : type(TokenType::FLOAT), value(value) {}
 };
+typedef std::vector<Token> TokenList;
+typedef TokenList::const_iterator TokenIterator;
 
 struct VariableNotFoundError
 {
@@ -410,9 +465,9 @@ std::string str_toupper(std::string s) {
     return s;
 }
 
-std::vector<Token> Tokenize(const std::string& line)
+TokenList Tokenize(const std::string& line)
 {
-    std::vector<Token> tokens;
+    TokenList tokens;
     std::string pending;
     size_t pending_started = 0;
 
@@ -497,20 +552,23 @@ std::vector<Token> Tokenize(const std::string& line)
             continue;
         }
 
-        auto [matched, result] = [&](){
-            for(const auto& [word, result]: StringToKeywordOrOperatorMap) {
+        auto result = [&]() -> std::optional<std::pair<size_t, TokenType>>{
+            // XXX Could probably make a custom compare that would fit std::map
+            for(const auto& [word, result]: StringToToken) {
                 if(str_toupper(line.substr(index, word.size())) == word.c_str()) {
-                    return std::make_tuple(word, result);
+                    return std::make_pair(word.size(), result);
                 }
             }
-            return std::make_tuple(std::string(""), KeywordOrOperator::NONE);
+            return std::nullopt;
         }();
 
-        if (result != KeywordOrOperator::NONE)
+        if (result.has_value())
         {
             flush_pending();
-            tokens.push_back(Token(TokenType::KEYWORD_OR_OPERATOR, result));
-            index += matched.size();
+            auto size = result.value().first;
+            auto token = result.value().second;
+            tokens.push_back(Token(token));
+            index += size;
         }
         else
         {
@@ -524,100 +582,209 @@ std::vector<Token> Tokenize(const std::string& line)
     return tokens;
 }
 
-void print_tokenized(const std::vector<Token>& tokens)
+void print_tokenized(const TokenList& tokens)
 {
     printf("%zd tokens: ", tokens.size());
     for(const auto& t: tokens) {
-        auto v = t.value.value();
         switch(t.type) {
-            case TokenType::KEYWORD_OR_OPERATOR: {
-                auto ko = std::get<KeywordOrOperator>(v);
-                printf("%s ", KeywordOrOperatorToStringMap[ko]);
-                break;
-            }
             case TokenType::IDENTIFIER: {
+                auto v = t.value.value();
                 printf("%s ", std::get<std::string>(v).c_str());
                 break;
             }
-            case TokenType::FLOAT:
+            case TokenType::FLOAT: {
+                auto v = t.value.value();
                 printf("%.f ", std::get<double>(v));
                 break;
-            case TokenType::INTEGER:
+            }
+            case TokenType::INTEGER: {
+                auto v = t.value.value();
                 printf("%d ", std::get<int32_t>(v));
                 break;
-            case TokenType::REMARK:
+            }
+            case TokenType::REMARK: {
+                auto v = t.value.value();
                 printf("REM%s ", std::get<std::string>(v).c_str());
                 break;
-            case TokenType::STRING_LITERAL:
+            }
+            case TokenType::STRING_LITERAL: {
+                auto v = t.value.value();
                 printf("\"%s\" ", std::get<std::string>(v).c_str());
                 break;
+            }
+            default: {
+                printf("%s ", TokenTypeToStringMap[t.type]);
+                break;
+            }
         }
     }
     printf("\n");
 }
 
-typedef std::variant<std::string, int32_t, double> Value;
+std::string str(const Value& v) { return std::get<std::string>(v); }
+double dbl(const Value& v) { return std::get<double>(v); }
+int32_t igr(const Value& v) { return std::get<int32_t>(v); }
+bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
+bool is_dbl(const Value& v) { return std::holds_alternative<double>(v); }
+bool is_igr(const Value& v) { return std::holds_alternative<int32_t>(v); }
+
 typedef std::variant<Value, std::vector<Value>> MultiValue;
 typedef std::unordered_map<std::string, MultiValue> VariableMap;
 // Vector is indices into dimensioned variables
 typedef std::pair<std::string, int> VariableReference;
-typedef std::optional<Value> ASTValue;
-struct ASTNode;
-typedef std::shared_ptr<ASTNode> ASTNodePtr;
-typedef std::map<int32_t, ASTNodePtr> StoredProgram;
+typedef std::optional<Value> Result;
+typedef std::map<int32_t, TokenList> StoredProgram;
 
-// XXX Cases that need VariableReference: INPUT, READ, left side of EQUALS
+struct TypeMismatchError { };
 
-Value Evaluate(const VariableReference& ref, const VariableMap& variables)
+Value EvaluateVariable(const VariableReference& ref, const VariableMap& variables)
 {
     auto iter = variables.find(ref.first);
     if(iter == variables.end()) {
         throw VariableNotFoundError(ref.first);
     }
-    auto mvalue = iter->second;
-    if(std::holds_alternative<std::vector<Value>>(mvalue)) {
-        return std::get<std::vector<Value>>(mvalue)[ref.second];
+    auto value = iter->second;
+    if(std::holds_alternative<std::vector<Value>>(value)) {
+        return std::get<std::vector<Value>>(value)[ref.second];
     }
-    return std::get<Value>(mvalue);
+    return std::get<Value>(value);
 }
 
-struct InvalidLValueError { };
-struct TypeMismatchError { };
-
-struct ASTNode
+template <class Op>
+Value EvaluateUnary(Value v, Op op)
 {
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) = 0;
-    virtual VariableReference evaluateL(VariableMap& variables, StoredProgram& program) {
-        throw InvalidLValueError();
+    if(is_str(v)) {
+        throw TypeMismatchError();
     }
-    virtual ~ASTNode() {}
-};
-
-typedef std::shared_ptr<ASTNode> ASTNodePtr;
+    if(is_dbl(v)) {
+        return dbl(v);
+    } else {
+        return igr(v);
+    }
+}
 
 template <class Op>
-struct ASTNumberUnary : public ASTNode
+Value EvaluateBinary(Value l, Value r, Op op)
 {
-    ASTNodePtr node;
-    Op op;
-    ASTNumberUnary(ASTNodePtr node, Op op) :
-        node(std::move(node)),
-        op(op)
-    {}
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
-    {
-        Value v = node->evaluateR(variables, program).value();
-        if(std::holds_alternative<std::string>(v)) {
-            throw TypeMismatchError();
-        }
-        if(std::holds_alternative<double>(v)) {
-            return op(std::get<double>(v));
-        } else {
-            return op(std::get<int32_t>(v));
+    if(is_str(r)) {
+        throw TypeMismatchError();
+    }
+    if(is_str(l)) {
+        throw TypeMismatchError();
+    }
+    if(is_dbl(l) && is_dbl(r)) {
+        return op(dbl(l), dbl(r));
+    } else if(is_dbl(l)) {
+        return op(dbl(l), igr(r));
+    } else if(is_dbl(r)) {
+        return op(igr(l), dbl(r));
+    } else {
+        return op(igr(l), igr(r));
+    }
+}
+
+#if 0
+    TokenList value_stack;
+    TokenList operator_stack;
+    for(const auto& t: tokens) {
+        switch(t.type) {
+            case TokenType::INTEGER:
+            case TokenType::FLOAT:
+            case TokenType::STRING_LITERAL:
+            {
+                if(!operator_stack.empty()) {
+                    auto op = operator_stack.back();
+                    operator_stack.pop_back();
+                    switch(op.type) {
+                        case TokenType::PLUS: {
+                            auto left = value_stack.back().value.value();
+                            value_stack.pop_back();
+                            auto right = t.value.value();
+                            value_stack.push_back(EvaluateBinary(left, right, [](auto l, auto r){return r + l;}));
+                            break;
+                        }
+                        default: abort();
+                    }
+                } else {
+                    value_stack.push_back(t);
+                }
+                break;
+            }
+            case TokenType::PLUS:
+                operator_stack.push_back(t);
+                break;
+            case TokenType::IDENTIFIER:
+                operator_stack.push_back(t);
+                break;
+            default: abort();
         }
     }
-    virtual ~ASTNumberUnary() {}
-};
+    if(!value_stack.empty()) {
+        auto result = value_stack.back();
+        value_stack.pop_back();
+        return result;
+    }
+#endif
+
+
+void EvaluateTokens(const TokenList& tokens, const VariableMap& variables, StoredProgram& program)
+{
+    if(tokens.size() == 0) {
+        // Should evaluate to nothing.
+        return;
+    }
+    if(tokens[0].type == TokenType::INTEGER) {
+        // Line number - a program line
+        auto line_number = std::get<int32_t>(tokens[0].value.value());
+        auto line = TokenList(tokens.cbegin() + 1, tokens.cend());
+        program[line_number] = line;
+        return;
+    }
+    if(tokens[0].type == TokenType::REMARK) {
+        return;
+    }
+
+    std::vector<std::pair<TokenIterator, TokenIterator>> subsets;
+    TokenIterator begin = tokens.begin();
+    TokenIterator colon = tokens.begin();
+    while(colon != tokens.end()) {
+        if((*colon).type == TokenType::COLON) {
+            if(begin != colon) {
+                subsets.push_back({begin, colon});
+            }
+            begin = colon;
+        }
+    }
+    if(begin != colon) {
+        subsets.push_back({begin, colon});
+    }
+
+    while(!subsets.empty()) {
+        auto [begin, end] = subsets.back();
+        subsets.pop_back();
+        if((*begin).type == TokenType::OPEN_PAREN) {
+            int count = 1;
+            auto close = begin + 1;
+            while(close != end && count > 0) {
+                if((*close).type == TokenType::OPEN_PAREN) {
+                    count++;
+                } else if((*close).type == TokenType::CLOSE_PAREN) {
+                    count--;
+                }
+            }
+            if(close != end) {
+                subsets.push_back({close, end});
+            }
+            subsets.push_back({begin, close});
+        } else {
+            // ??
+        }
+    }
+}
+
+#if 0
+
+struct InvalidLValueError { };
 
 template <class Op>
 struct ASTString1Param : public ASTNode
@@ -667,92 +834,12 @@ struct ASTString2Param : public ASTNode
     virtual ~ASTString2Param() {}
 };
 
-template <class Op>
-struct ASTBinary : public ASTNode
-{
-    ASTNodePtr left;
-    ASTNodePtr right;
-    Op op;
-    ASTBinary(ASTNodePtr left, ASTNodePtr right, Op op) :
-        left(std::move(left)),
-        right(std::move(right)),
-        op(op)
-    {}
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
-    {
-        Value r = right->evaluateR(variables, program).value();
-        Value l = left->evaluateR(variables, program).value();
-        if(std::holds_alternative<std::string>(r)) {
-            throw TypeMismatchError();
-        }
-        if(std::holds_alternative<std::string>(l)) {
-            throw TypeMismatchError();
-        }
-        if(std::holds_alternative<double>(l) && std::holds_alternative<double>(r)) {
-            return op(std::get<double>(l), std::get<double>(r));
-        } else if(std::holds_alternative<double>(l)) {
-            return op(std::get<double>(l), std::get<int32_t>(r));
-        } else if(std::holds_alternative<double>(r)) {
-            return op(std::get<int32_t>(l), std::get<double>(r));
-        } else {
-            return op(std::get<int32_t>(l), std::get<int32_t>(r));
-        }
     }
     virtual ~ASTBinary() {}
 };
 
-struct ASTVariableInstance : public ASTNode
-{
-    VariableReference ref;
-    ASTVariableInstance(const VariableReference& ref) :
-        ref(ref)
-    {}
-    virtual VariableReference evaluateL(VariableMap& variables, StoredProgram& program) override {
-        return ref;
-    }
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override {
-        return Evaluate(ref, variables);
-    }
-    virtual ~ASTVariableInstance() {}
-};
 
-struct ASTNull : public ASTNode
-{
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override {
-        return ASTValue();
-    }
-    virtual ~ASTNull() {}
-};
-
-struct ASTProgramLine : public ASTNode 
-{
-    int32_t line_number;
-    ASTNodePtr line;
-    ASTProgramLine(int32_t line_number, ASTNodePtr line) :
-        line_number(line_number),
-        line(line)
-    {}
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
-    {
-        program[line_number] = line;
-        return ASTValue();
-    }
-    virtual ~ASTProgramLine() {}
-};
-
-struct ASTConstant : public ASTNode
-{
-    Value val;
-    ASTConstant(const Value& val) :
-        val(val)
-    {}
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override {
-        return val;
-    }
-    virtual ~ASTConstant() {}
-};
-
-ASTNodePtr Parse(std::vector<Token>::const_iterator begin, std::vector<Token>::const_iterator end)
+ASTNodePtr Parse(TokenIterator begin, TokenIterator end)
 {
     // KEYWORD_OR_OPERATOR MULTIPLY, PLUS
     // INTEGER, FLOAT, STRING_LITERAL
@@ -763,8 +850,8 @@ ASTNodePtr Parse(std::vector<Token>::const_iterator begin, std::vector<Token>::c
         auto token = *begin;
         switch(token.type) {
             case TokenType::KEYWORD_OR_OPERATOR:
-                switch(std::get<KeywordOrOperator>(token.value.value())) {
-                    case KeywordOrOperator::PLUS: {
+                switch(std::get<TokenType>(token.value.value())) {
+                    case TokenType::PLUS: {
                         ASTNodePtr left = node_stack.back();
                         node_stack.pop_back();
                         ASTNodePtr right = Parse(begin + 1, end);
@@ -772,7 +859,7 @@ ASTNodePtr Parse(std::vector<Token>::const_iterator begin, std::vector<Token>::c
                         node_stack.push_back(plus);
                         break;
                     }
-                    case KeywordOrOperator::MULTIPLY: {
+                    case TokenType::MULTIPLY: {
                         ASTNodePtr left = node_stack.back();
                         node_stack.pop_back();
                         ASTNodePtr right = Parse(begin + 1, end);
@@ -814,34 +901,18 @@ ASTNodePtr Parse(std::vector<Token>::const_iterator begin, std::vector<Token>::c
 
     return node_stack[0];
 }
+#endif
 
-ASTNodePtr ParseCOLON(std::vector<Token>::const_iterator begin, std::vector<Token>::const_iterator end)
+std::string to_string(const Result& r)
 {
-    return Parse(begin, end);
-}
-
-ASTNodePtr Parse(const std::vector<Token>& tokens)
-{
-    if(tokens.size() == 0) {
-        // Should evaluate to nothing.
-        return std::make_shared<ASTNull>();
-    }
-    if(tokens[0].type == TokenType::INTEGER) {
-        // Line number - a program line
-        return std::make_shared<ASTProgramLine>(std::get<int32_t>(tokens[0].value.value()), ParseCOLON(tokens.cbegin() + 1, tokens.cend()));
-    }
-    return Parse(tokens.cbegin(), tokens.cend());
-}
-
-std::string to_string(const ASTValue& v)
-{
-    if(v.has_value()) {
-        if(std::holds_alternative<int32_t>(v.value())) {
-            return std::to_string(std::get<int32_t>(v.value()));
-        } else if(std::holds_alternative<double>(v.value())) {
-            return std::to_string(std::get<double>(v.value()));
-        } else if(std::holds_alternative<std::string>(v.value())) {
-            return std::get<std::string>(v.value()).c_str();
+    if(r.has_value()) {
+        auto v = r.value();
+        if(is_igr(v)) {
+            return std::to_string(igr(v));
+        } else if(is_dbl(v)) {
+            return std::to_string(dbl(v));
+        } else if(is_igr(v)) {
+            return str(v).c_str();
         } else {
             abort();
         }
@@ -861,6 +932,7 @@ int main(int argc, char **argv)
     variables["A"] = 123.0;
     variables["B"] = "Hello World!";
 
+#if 0
     if(false) {
         auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
         auto strun = ASTString1Param(node, [](auto v){return static_cast<int32_t>(v.size());});
@@ -890,6 +962,7 @@ int main(int argc, char **argv)
         auto result = bin->evaluateR(variables, program);
         printf("%s\n", to_string(result).c_str());
     }
+#endif
 
     if(true) {
         std::set<std::string> identifiers;
@@ -904,18 +977,18 @@ int main(int argc, char **argv)
                         identifiers.insert(std::get<std::string>(value).c_str());
                     }
                 }
-                ASTNodePtr node = Parse(tokens);
-                auto result = node->evaluateR(variables, program);
-                printf("%s\n", to_string(result).c_str());
+                EvaluateTokens(tokens, variables, program);
             } catch (const TokenizeError& e) {
                 switch(e.type) {
                     case TokenizeError::SYNTAX:
                         printf("syntax error at %d (\"%5s\")\n", e.position, line + e.position);
                 }
+#if 0
             } catch (const InvalidLValueError& e) {
                 printf("expected an l-value but none available\n");
             } catch (const TypeMismatchError& e) {
                 printf("expected a number, encountered a string\n");
+#endif
             } catch (const VariableNotFoundError& e) {
                 printf("unknown variable \"%s\"\n", e.var.c_str());
             }
