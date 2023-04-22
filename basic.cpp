@@ -31,6 +31,75 @@ evaluate AST
     invoke functions
     store program
 
+make a multi-tree of Tokens iteratively
+Tree { Token token; std::vector<Token> left; std::vector<Token> right; };
+IDENTIFIER, INTEGER, FLOAT, STRING_LITERAL are all atoms, already tokenized
+Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
+* first token is an INTEGER - line is a program line, right is all statements
+* COLON
+* OPEN_PAREN - parse to next matching CLOSE_PAREN,
+* reserved words (what about multiple reserved words?)
+    DIM
+    LET,
+    IF,
+    THEN,
+    ELSE,
+    FOR,
+    TO,
+    STEP,
+    NEXT,
+    ON,
+    GOTO,
+    GOSUB,
+    RETURN,
+    PRINT,
+    INPUT,
+    END,
+    WAIT,
+    DEF FN
+    WIDTH,
+    CLEAR,
+    READ,
+    DATA,
+* separators
+    COMMA,
+    SEMICOLON,
+* functions
+    ABS,
+    ATN,
+    COS,
+    EXP,
+    INT,
+    LOG,
+    RND,
+    SGN,
+    SIN,
+    SQR,
+    TAN,
+    LEFT,
+    RIGHT,
+    MID,
+    LEN,
+    STR,
+    TAB,
+    CHR,
+* operators in reverse precedence order
+    EQUAL,
+    NOT_EQUAL,
+    LESS_THAN,
+    MORE_THAN,
+    LESS_THAN_EQUAL,
+    MORE_THAN_EQUAL,
+    PLUS,
+    MINUS,
+    AND,
+    OR,
+    NOT,
+    MODULO,
+    MULTIPLY,
+    DIVIDE,
+    POWER,
+
 vector<vector<KeywordOrOperator>> PrecedenceTable =
 {
     // what about NOT and unary MINUS?
@@ -40,8 +109,7 @@ vector<vector<KeywordOrOperator>> PrecedenceTable =
     { LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, MORE_THAN_EQUAL },
     { EQUALS, NOT_EQUAL},
     { AND, OR },
-    { COMMA, SEMICOLON },
-    { COLON, }, // statements
+    // FUNCTIONS
 };
 
 // require OPEN_PAREN, then expressions separated by COMMA, then CLOSE_PAREN
@@ -85,19 +153,14 @@ Control flow or reserved words
     DATA list of expressions,
     READ list of identifiers,
     CLEAR
-    PRINT {;,,,expression} ... [;]
+    PRINT {SEMICOLON, COMMA, expression} ... [;]
     INPUT [STRING_LITERAL SEMICOLON] expression list
 
 Unknown
     identifier EQUAL expression
 
-Leaves (no precedence)
-    IDENTIFIER
-    INTEGER
-    FLOAT
-    STRING_LITERAL
-    Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
-
+COLON (statements)
+numbered lines
 */
 
 enum class KeywordOrOperator
@@ -166,7 +229,7 @@ enum class KeywordOrOperator
     DATA,
 };
 
-std::map<std::string, KeywordOrOperator> StringToKeywordOrOperatorMap =
+std::unordered_map<std::string, KeywordOrOperator> StringToKeywordOrOperatorMap =
 {
     {"<>", KeywordOrOperator::NOT_EQUAL},
     {"<=", KeywordOrOperator::LESS_THAN_EQUAL},
@@ -317,6 +380,14 @@ class Token
         Token(TokenType type, const std::string& value) : type(type), value(value) {}
         Token(int32_t value) : type(TokenType::INTEGER), value(value) {}
         Token(double value) : type(TokenType::FLOAT), value(value) {}
+};
+
+struct VariableNotFoundError
+{
+    std::string var;
+    VariableNotFoundError(const std::string var) :
+        var(var)
+    {}
 };
 
 struct TokenizeError
@@ -487,9 +558,13 @@ void print_tokenized(const std::vector<Token>& tokens)
 
 typedef std::variant<std::string, int32_t, double> Value;
 typedef std::variant<Value, std::vector<Value>> MultiValue;
-typedef std::map<std::string, MultiValue> VariableMap;
+typedef std::unordered_map<std::string, MultiValue> VariableMap;
 // Vector is indices into dimensioned variables
 typedef std::pair<std::string, int> VariableReference;
+typedef std::optional<Value> ASTValue;
+struct ASTNode;
+typedef std::shared_ptr<ASTNode> ASTNodePtr;
+typedef std::map<int32_t, ASTNodePtr> StoredProgram;
 
 // XXX Cases that need VariableReference: INPUT, READ, left side of EQUALS
 
@@ -497,7 +572,7 @@ Value Evaluate(const VariableReference& ref, const VariableMap& variables)
 {
     auto iter = variables.find(ref.first);
     if(iter == variables.end()) {
-        // throw a variable not found error
+        throw VariableNotFoundError(ref.first);
     }
     auto mvalue = iter->second;
     if(std::holds_alternative<std::vector<Value>>(mvalue)) {
@@ -511,8 +586,8 @@ struct TypeMismatchError { };
 
 struct ASTNode
 {
-    virtual Value evaluateR(VariableMap& variables) = 0;
-    virtual VariableReference evaluateL(VariableMap& variables) {
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) = 0;
+    virtual VariableReference evaluateL(VariableMap& variables, StoredProgram& program) {
         throw InvalidLValueError();
     }
     virtual ~ASTNode() {}
@@ -529,9 +604,9 @@ struct ASTNumberUnary : public ASTNode
         node(std::move(node)),
         op(op)
     {}
-    virtual Value evaluateR(VariableMap& variables) override
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
     {
-        Value v = node->evaluateR(variables);
+        Value v = node->evaluateR(variables, program).value();
         if(std::holds_alternative<std::string>(v)) {
             throw TypeMismatchError();
         }
@@ -553,9 +628,9 @@ struct ASTString1Param : public ASTNode
         node(std::move(node)),
         op(op)
     {}
-    virtual Value evaluateR(VariableMap& variables) override
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
     {
-        Value v = node->evaluateR(variables);
+        Value v = node->evaluateR(variables, program).value();
         if(!std::holds_alternative<std::string>(v)) {
             throw TypeMismatchError();
         }
@@ -575,10 +650,10 @@ struct ASTString2Param : public ASTNode
         param2(std::move(param2)),
         op(op)
     {}
-    virtual Value evaluateR(VariableMap& variables) override
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
     {
-        Value value1 = param1->evaluateR(variables);
-        Value value2 = param2->evaluateR(variables);
+        Value value1 = param1->evaluateR(variables, program).value();
+        Value value2 = param2->evaluateR(variables, program).value();
         if(!std::holds_alternative<std::string>(value1)) {
             printf("value 1 not string\n");
             throw TypeMismatchError();
@@ -603,10 +678,10 @@ struct ASTBinary : public ASTNode
         right(std::move(right)),
         op(op)
     {}
-    virtual Value evaluateR(VariableMap& variables) override
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
     {
-        Value r = right->evaluateR(variables);
-        Value l = left->evaluateR(variables);
+        Value r = right->evaluateR(variables, program).value();
+        Value l = left->evaluateR(variables, program).value();
         if(std::holds_alternative<std::string>(r)) {
             throw TypeMismatchError();
         }
@@ -632,13 +707,37 @@ struct ASTVariableInstance : public ASTNode
     ASTVariableInstance(const VariableReference& ref) :
         ref(ref)
     {}
-    virtual VariableReference evaluateL(VariableMap& variables) override {
+    virtual VariableReference evaluateL(VariableMap& variables, StoredProgram& program) override {
         return ref;
     }
-    virtual Value evaluateR(VariableMap& variables) override {
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override {
         return Evaluate(ref, variables);
     }
     virtual ~ASTVariableInstance() {}
+};
+
+struct ASTNull : public ASTNode
+{
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override {
+        return ASTValue();
+    }
+    virtual ~ASTNull() {}
+};
+
+struct ASTProgramLine : public ASTNode 
+{
+    int32_t line_number;
+    ASTNodePtr line;
+    ASTProgramLine(int32_t line_number, ASTNodePtr line) :
+        line_number(line_number),
+        line(line)
+    {}
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
+    {
+        program[line_number] = line;
+        return ASTValue();
+    }
+    virtual ~ASTProgramLine() {}
 };
 
 struct ASTConstant : public ASTNode
@@ -647,25 +746,108 @@ struct ASTConstant : public ASTNode
     ASTConstant(const Value& val) :
         val(val)
     {}
-    virtual Value evaluateR(VariableMap& variables) override {
+    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override {
         return val;
     }
     virtual ~ASTConstant() {}
 };
 
-ASTNodePtr Parse(const std::vector<Token>& tokens)
+ASTNodePtr Parse(std::vector<Token>::const_iterator begin, std::vector<Token>::const_iterator end)
 {
+    // KEYWORD_OR_OPERATOR MULTIPLY, PLUS
+    // INTEGER, FLOAT, STRING_LITERAL
+
+    std::vector<ASTNodePtr> node_stack;
+
+    while(begin < end) {
+        auto token = *begin;
+        switch(token.type) {
+            case TokenType::KEYWORD_OR_OPERATOR:
+                switch(std::get<KeywordOrOperator>(token.value.value())) {
+                    case KeywordOrOperator::PLUS: {
+                        ASTNodePtr left = node_stack.back();
+                        node_stack.pop_back();
+                        ASTNodePtr right = Parse(begin + 1, end);
+                        auto plus = std::shared_ptr<ASTNode>(new ASTBinary(left, right, [](auto l, auto r){return r + l;}));
+                        node_stack.push_back(plus);
+                        break;
+                    }
+                    case KeywordOrOperator::MULTIPLY: {
+                        ASTNodePtr left = node_stack.back();
+                        node_stack.pop_back();
+                        ASTNodePtr right = Parse(begin + 1, end);
+                        auto plus = std::shared_ptr<ASTNode>(new ASTBinary(left, right, [](auto l, auto r){return r * l;}));
+                        node_stack.push_back(plus);
+                        break;
+                    }
+                    default: abort(); break;
+                }
+                break;
+            case TokenType::INTEGER: {
+                ASTNodePtr constant = std::make_shared<ASTConstant>(std::get<int32_t>(token.value.value()));
+                node_stack.push_back(constant);
+                begin++;
+                break;
+            }
+            case TokenType::FLOAT: {
+                ASTNodePtr constant = std::make_shared<ASTConstant>(std::get<double>(token.value.value()));
+                node_stack.push_back(constant);
+                begin++;
+                break;
+            }
+            case TokenType::STRING_LITERAL: {
+                ASTNodePtr constant = std::make_shared<ASTConstant>(std::get<std::string>(token.value.value()));
+                node_stack.push_back(constant);
+                begin++;
+                break;
+            }
+            case TokenType::IDENTIFIER: {
+                // XXX missing subscripts
+                ASTNodePtr var = std::make_shared<ASTVariableInstance>(VariableReference(str_toupper(std::get<std::string>(token.value.value())), 0));
+                node_stack.push_back(var);
+                begin++;
+                break;
+            }
+            default: abort(); break;
+        }
+    }
+
+    return node_stack[0];
 }
 
-std::string to_string(const Value& v)
+ASTNodePtr ParseCOLON(std::vector<Token>::const_iterator begin, std::vector<Token>::const_iterator end)
 {
-    if(std::holds_alternative<int32_t>(v)) {
-        return std::to_string(std::get<int32_t>(v));
-    } else if(std::holds_alternative<double>(v)) {
-        return std::to_string(std::get<double>(v));
-    } else if(std::holds_alternative<std::string>(v)) {
-        return std::get<std::string>(v).c_str();
-    } else return "unknown"; // XXX variant should handle this for me.
+    return Parse(begin, end);
+}
+
+ASTNodePtr Parse(const std::vector<Token>& tokens)
+{
+    if(tokens.size() == 0) {
+        // Should evaluate to nothing.
+        return std::make_shared<ASTNull>();
+    }
+    if(tokens[0].type == TokenType::INTEGER) {
+        // Line number - a program line
+        return std::make_shared<ASTProgramLine>(std::get<int32_t>(tokens[0].value.value()), ParseCOLON(tokens.cbegin() + 1, tokens.cend()));
+    }
+    return Parse(tokens.cbegin(), tokens.cend());
+}
+
+std::string to_string(const ASTValue& v)
+{
+    if(v.has_value()) {
+        if(std::holds_alternative<int32_t>(v.value())) {
+            return std::to_string(std::get<int32_t>(v.value()));
+        } else if(std::holds_alternative<double>(v.value())) {
+            return std::to_string(std::get<double>(v.value()));
+        } else if(std::holds_alternative<std::string>(v.value())) {
+            return std::get<std::string>(v.value()).c_str();
+        } else {
+            abort();
+        }
+    } else {
+        return "NoValue";
+    }
 }
 
 int main(int argc, char **argv)
@@ -673,41 +855,43 @@ int main(int argc, char **argv)
     char line[1024];
     std::set<std::string> identifiers;
 
+    StoredProgram program;
+
     VariableMap variables;
     variables["A"] = 123.0;
     variables["B"] = "Hello World!";
 
-    {
+    if(false) {
         auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
         auto strun = ASTString1Param(node, [](auto v){return static_cast<int32_t>(v.size());});
-        auto result = strun.evaluateR(variables);
-        printf("%s\n", to_string(result).c_str());
-    }
-
-    {
-        auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
-        auto len = std::make_shared<ASTConstant>(5);
-        auto strun = ASTString2Param(node, len, [](auto v1, auto v2){return v1.substr(0, v2);});
-        auto result = strun.evaluateR(variables);
-        printf("%s\n", to_string(result).c_str());
-    }
-
-    {
-        auto node = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
-        auto un = ASTNumberUnary(node, [](auto v){return ! v;});
-        auto result = un.evaluateR(variables);
-        printf("%s\n", to_string(result).c_str());
-    }
-
-    {
-        auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
-        auto right = std::make_shared<ASTConstant>(100);
-        auto bin = ASTBinary(left, right, [](auto l, auto r){return r - l;});
-        auto result = bin.evaluateR(variables);
+        auto result = strun.evaluateR(variables, program);
         printf("%s\n", to_string(result).c_str());
     }
 
     if(false) {
+        auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
+        auto len = std::make_shared<ASTConstant>(5);
+        auto strun = ASTString2Param(node, len, [](auto v1, auto v2){return v1.substr(0, v2);});
+        auto result = strun.evaluateR(variables, program);
+        printf("%s\n", to_string(result).c_str());
+    }
+
+    if(false) {
+        auto node = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
+        auto un = ASTNumberUnary(node, [](auto v){return ! v;});
+        auto result = un.evaluateR(variables, program);
+        printf("%s\n", to_string(result).c_str());
+    }
+
+    if(true) {
+        auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
+        auto right = std::make_shared<ASTConstant>(100);
+        auto bin = std::shared_ptr<ASTNode>(new ASTBinary(left, right, [](auto l, auto r){return r - l;}));
+        auto result = bin->evaluateR(variables, program);
+        printf("%s\n", to_string(result).c_str());
+    }
+
+    if(true) {
         std::set<std::string> identifiers;
         while(fgets(line, sizeof(line), stdin) != NULL) {
             line[strlen(line) - 1] = '\0';
@@ -720,6 +904,9 @@ int main(int argc, char **argv)
                         identifiers.insert(std::get<std::string>(value).c_str());
                     }
                 }
+                ASTNodePtr node = Parse(tokens);
+                auto result = node->evaluateR(variables, program);
+                printf("%s\n", to_string(result).c_str());
             } catch (const TokenizeError& e) {
                 switch(e.type) {
                     case TokenizeError::SYNTAX:
@@ -729,11 +916,15 @@ int main(int argc, char **argv)
                 printf("expected an l-value but none available\n");
             } catch (const TypeMismatchError& e) {
                 printf("expected a number, encountered a string\n");
+            } catch (const VariableNotFoundError& e) {
+                printf("unknown variable \"%s\"\n", e.var.c_str());
             }
         }
-        printf("identifiers:\n");
-        for(const auto &id: identifiers) {
-            printf("%s\n", id.c_str());
+        if(false) {
+            printf("identifiers:\n");
+            for(const auto &id: identifiers) {
+                printf("%s\n", id.c_str());
+            }
         }
     }
 }
