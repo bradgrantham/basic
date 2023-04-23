@@ -11,10 +11,9 @@
 #include <set>
 
 /*
-Must figure out soon
-IDENTIFIER - different tokens for string and number IDENTIFIER?
-DEF FN A - should FN not be a reserved word, and just require all functions to start with "FN"?
-        FN_IDENTIFIER, NUMBER_IDENTIFIER, and STRING_IDENTIFIER?
+TO DO
+tokenize exponential notation
+2D variables; DIM, references
 */
 
 /*
@@ -56,6 +55,7 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     DEF, // But this is always followed by FN or in later basics INT, SNG, DBL, or STR
     WIDTH,
     CLEAR,
+    ORDER,
     READ,
     DATA,
 * separators
@@ -80,6 +80,7 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     STR,
     TAB,
     CHR,
+    VAL,
 * operators in reverse precedence order
     EQUAL,
     NOT_EQUAL,
@@ -98,64 +99,57 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     POWER,
 
 // need separate string and number identifiers and expressions?
-line ::= INTEGER statement-list EOL | statement-list EOL
-statement-list = statement (COLON statement)*
+identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns Token
+number ::= (FLOAT | INTEGER) // returns Token
+unary-op ::= (PLUS | MINUS | NOT) // returns Token
+variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+term ::= {unary-op} (INTEGER | FLOAT | variable-reference) // evaluates using unary-ops, returns Value
+exp-op ::= term POWER term // evaluates, returns Value
+product-op ::= term (MULTIPLY | DIVIDE | MODULO) (product-op | exp-op) // evaluates, returns Value
+sum-op ::= term (PLUS | MINUS) (sum-op | product-op | exp-op) // evaluates, returns Value
+relational-op ::= term (LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | MORE_THAN_EQUAL) (relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
+compare-op ::= term (EQUALS | NOT_EQUAL) (compare-op | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
+logic-op ::= term (AND | OR) numeric-expression // evaluates, returns Value
+numeric-expression ::= term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op // evaluates, returns Value
+parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
+numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns Token
+function ::= (numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN) |
+             (LEN OPEN_PAREN string-expression CLOSE_PAREN) | 
+             (VAL OPEN_PAREN string-expression CLOSE_PAREN) | 
+             (LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN) | 
+             (RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN) | 
+             (MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN)
+             // evaluates, returns Value
+expression ::= OPEN_PAREN expression CLOSE_PAREN | STRING_LITERAL | numeric-expression | function // evaluates, returns Value
+expression-list ::= expression (COMMA expression)* // returns std::vector<Value>
+variable-reference-list ::= variable-reference (COMMA | variable-reference)* // returns std::vector<VariableReference>
+integer-list ::= INTEGER (COMMA INTEGER)* // returns std::vector<int32_t>
+user-function ::= FUNCTION OPEN_PAREN expression expression-list CLOSE_PAREN // evaluates? returns Value
 statement ::= PRINT (COMMA | SEMICOLON | expression)*
               [LET] variable-reference EQUAL expression
-              INPUT [STRING_LITERAL SEMICOLON] variable-reference (COMMA | variable-reference)*
-              DIM IDENTIFIER OPEN_PAREN INTEGER CLOSE_PAREN
-              IF expression THEN (INTEGER | statement) [ELSE statement]
-              FOR IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers?
-              NEXT [IDENTIFIER]
-              ...
-              ON numeric-expression (GOTO | GOSUB) INTEGER (COMMA INTEGER)*
-              GOTO INTEGER
-              GOSUB INTEGER
+              INPUT [STRING_LITERAL SEMICOLON] variable-reference-list
+              DIM identifier OPEN_PAREN integer-list CLOSE_PAREN
+              IF expression THEN (INTEGER | statement) [ELSE (INTEGER | statement)]
+              FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers?
+              NEXT [NUMBER_IDENTIFIER]
+              ON numeric-expression (GOTO | GOSUB) integer-list
+              (GOTO | GOSUB) INTEGER
+              WAIT numeric-expression
+              WIDTH numeric-expression
+              ORDER INTEGER
+              READ variable-reference-list
+              DATA expression-list
+              DEF FUNCTION OPEN_PAREN parameter-list CLOSE_PAREN numeric-expression
               RETURN
               END
               CLEAR
-              WAIT numeric-expression
-              WIDTH numeric-expression
-              READ variable-reference
-              DATA expression (COMMA expression)*
-              DEF FN IDENTIFIER OPEN_PAREN IDENTIFIER (COMMA IDENTIFIER)* CLOSE_PAREN expression
-variable-reference ::= IDENTIFIER [OPEN_PAREN numeric-expression CLOSE_PAREN]
-expression ::= OPEN_PAREN expression CLOSE_PAREN | STRING_LITERAL | numeric-expression | function
-function ::= ABS OPEN_PAREN numeric-expression CLOSE_PAREN
-             ATN OPEN_PAREN numeric-expression CLOSE_PAREN
-             COS OPEN_PAREN numeric-expression CLOSE_PAREN
-             EXP OPEN_PAREN numeric-expression CLOSE_PAREN
-             INT OPEN_PAREN numeric-expression CLOSE_PAREN
-             LOG OPEN_PAREN numeric-expression CLOSE_PAREN
-             RND OPEN_PAREN numeric-expression CLOSE_PAREN
-             SGN OPEN_PAREN numeric-expression CLOSE_PAREN
-             SIN OPEN_PAREN numeric-expression CLOSE_PAREN
-             SQR OPEN_PAREN numeric-expression CLOSE_PAREN
-             TAN OPEN_PAREN numeric-expression CLOSE_PAREN
-             TAB OPEN_PAREN numeric-expression CLOSE_PAREN
-             CHR OPEN_PAREN numeric-expression CLOSE_PAREN
-             STR OPEN_PAREN numeric-expression CLOSE_PAREN
-             LEN OPEN_PAREN string-expression CLOSE_PAREN
-             LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
-             RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
-             MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
-numeric-expression ::= INTEGER | FLOAT | (unary-op numeric-expression) (binary-op | numeric-expression)*
-unary-op ::= (PLUS | MINUS | NOT)
-binary-op ::= PLUS
-              MINUS
-              MULTIPLY
-              DIVIDE
-              POWER
-              MODULO
-              LESS_THAN
-              GREATER_THAN
-              LESS_THAN_EQUAL
-              MORE_THAN_EQUAL
-              EQUALS
-              NOT_EQUAL
-              AND
-              OR
-number ::= (FLOAT | INTEGER)
+              RUN
+              STOP
+              // does the work, returns void
+              // some of these are not valid in direct mode, like INPUT
+              // READ is discarded when not in direct
+statement-list ::= statement (COLON statement)* // returns void
+line ::= INTEGER statement-list EOL | statement-list EOL // returns void
 
 vector<vector<TokenType>> PrecedenceTable =
 {
@@ -190,6 +184,7 @@ std::set<TokenType> Functions =
     LEN,
     STR,
     TAB,
+    VAL,
 };
 
 Control flow or reserved words
@@ -209,6 +204,7 @@ Control flow or reserved words
     WIDTH expression, // ignore?
     DATA list of expressions,
     READ list of identifiers,
+    ORDER expression
     CLEAR
     PRINT {SEMICOLON, COMMA, expression} ... [;]
     INPUT [STRING_LITERAL SEMICOLON] expression list
@@ -223,7 +219,8 @@ numbered lines
 
 enum class TokenType
 {
-    IDENTIFIER,
+    STRING_IDENTIFIER,
+    NUMBER_IDENTIFIER,
     INTEGER,
     FLOAT,
     STRING_LITERAL,
@@ -280,14 +277,18 @@ enum class TokenType
     LEN,
     STR,
     TAB,
+    VAL,
     WAIT,
     DEF,
     FN,
     CHR,
     WIDTH,
     CLEAR,
+    RUN,
+    STOP,
     ON,
     READ,
+    ORDER,
     DATA,
 };
 
@@ -345,6 +346,7 @@ std::unordered_map<std::string, TokenType> StringToToken =
     {"STR$", TokenType::STR},
     {"LEN", TokenType::LEN},
     {"TAB", TokenType::TAB},
+    {"VAL", TokenType::VAL},
     {"WAIT", TokenType::WAIT},
     {"DEF", TokenType::DEF},
     {"FN", TokenType::FN},
@@ -353,7 +355,10 @@ std::unordered_map<std::string, TokenType> StringToToken =
     {"CLEAR", TokenType::CLEAR},
     {"ON", TokenType::ON},
     {"READ", TokenType::READ},
+    {"ORDER", TokenType::ORDER},
     {"DATA", TokenType::DATA},
+    {"RUN", TokenType::RUN},
+    {"STOP", TokenType::STOP},
 };
 
 std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
@@ -410,6 +415,7 @@ std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
     {TokenType::STR, "STR$"},
     {TokenType::LEN, "LEN"},
     {TokenType::TAB, "TAB"},
+    {TokenType::VAL, "VAL"},
     {TokenType::WAIT, "WAIT"},
     {TokenType::DEF, "DEF"},
     {TokenType::FN, "FN"},
@@ -418,7 +424,10 @@ std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
     {TokenType::CLEAR, "CLEAR"},
     {TokenType::ON, "ON"},
     {TokenType::READ, "READ"},
+    {TokenType::ORDER, "ORDER"},
     {TokenType::DATA, "DATA"},
+    {TokenType::RUN, "RUN"},
+    {TokenType::STOP, "STOP"},
 };
 
 typedef std::variant<std::string, int32_t, double> Value;
@@ -508,21 +517,28 @@ TokenList Tokenize(const std::string& line)
                 pending = pending.substr(dpos);
                 pending_started += dpos;
             } else {
-                for(int i = 0; i < pending.size(); i++) {
+                for(int i = 0; i < pending.size() - 1; i++) {
                     char c = pending[i];
-                    if(!isalnum(c) && c != '_' && c != '$') {
+                    if(!isalnum(c) && c != '_') {
                         throw TokenizeError(TokenizeError::SYNTAX, pending_started + i);
                     }
                 }
-                tokens.push_back(Token(TokenType::IDENTIFIER, pending));
+                char c = pending[pending.size() - 1];
+                if(!isalnum(c) && c != '_' && c != '$') {
+                    throw TokenizeError(TokenizeError::SYNTAX, pending_started + i);
+                }
+                if(pending[pending.size() - 1] == '$') {
+                    tokens.push_back(Token(TokenType::STRING_IDENTIFIER, pending));
+                } else {
+                    tokens.push_back(Token(TokenType::NUMBER_IDENTIFIER, pending));
+                }
                 pending.clear();
                 pending_started = std::string::npos;
             }
         }
     };
 
-    for (int index = 0; index < line.size();)
-    {
+    for (size_t index = 0; index < line.size();) {
         if(str_toupper(line.substr(index, 3)) == "REM") {
             flush_pending();
             tokens.push_back(Token(TokenType::REMARK, line.substr(index + 3)));
@@ -562,16 +578,13 @@ TokenList Tokenize(const std::string& line)
             return std::nullopt;
         }();
 
-        if (result.has_value())
-        {
+        if (result) {
             flush_pending();
             auto size = result.value().first;
             auto token = result.value().second;
             tokens.push_back(Token(token));
             index += size;
-        }
-        else
-        {
+        } else {
             add_pending(index, c);
             index++;
         }
@@ -587,14 +600,16 @@ void print_tokenized(const TokenList& tokens)
     printf("%zd tokens: ", tokens.size());
     for(const auto& t: tokens) {
         switch(t.type) {
-            case TokenType::IDENTIFIER: {
+            case TokenType::STRING_IDENTIFIER:
+            case TokenType::NUMBER_IDENTIFIER:
+            {
                 auto v = t.value.value();
                 printf("%s ", std::get<std::string>(v).c_str());
                 break;
             }
             case TokenType::FLOAT: {
                 auto v = t.value.value();
-                printf("%.f ", std::get<double>(v));
+                printf("%f ", std::get<double>(v));
                 break;
             }
             case TokenType::INTEGER: {
@@ -628,26 +643,30 @@ bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
 bool is_dbl(const Value& v) { return std::holds_alternative<double>(v); }
 bool is_igr(const Value& v) { return std::holds_alternative<int32_t>(v); }
 
-typedef std::variant<Value, std::vector<Value>> MultiValue;
-typedef std::unordered_map<std::string, MultiValue> VariableMap;
+typedef std::tuple<int32_t, int32_t, std::vector<Value>> VariableValue;
+typedef std::unordered_map<std::string, VariableValue> VariableMap;
 // Vector is indices into dimensioned variables
-typedef std::pair<std::string, int> VariableReference;
+typedef std::tuple<std::string, int32_t, int32_t> VariableReference;
 typedef std::optional<Value> Result;
 typedef std::map<int32_t, TokenList> StoredProgram;
+
+struct State {
+    VariableMap variables;
+    StoredProgram program;
+    bool direct_mode{true};
+};
 
 struct TypeMismatchError { };
 
 Value EvaluateVariable(const VariableReference& ref, const VariableMap& variables)
 {
-    auto iter = variables.find(ref.first);
+    auto& [name, i1, i2] = ref;
+    auto iter = variables.find(name);
     if(iter == variables.end()) {
-        throw VariableNotFoundError(ref.first);
+        throw VariableNotFoundError(name);
     }
-    auto value = iter->second;
-    if(std::holds_alternative<std::vector<Value>>(value)) {
-        return std::get<std::vector<Value>>(value)[ref.second];
-    }
-    return std::get<Value>(value);
+    auto [d1, d2, values] = iter->second;
+    return values[i2 * d1 + i1];
 }
 
 template <class Op>
@@ -713,7 +732,8 @@ Value EvaluateBinary(Value l, Value r, Op op)
             case TokenType::PLUS:
                 operator_stack.push_back(t);
                 break;
-            case TokenType::IDENTIFIER:
+            case TokenType::NUMBER_IDENTIFIER:
+            case TokenType::STRING_IDENTIFIER:
                 operator_stack.push_back(t);
                 break;
             default: abort();
@@ -726,8 +746,19 @@ Value EvaluateBinary(Value l, Value r, Op op)
     }
 #endif
 
+std::optional<Token> EvaluateIdentifier(const TokenIterator& begin, const TokenIterator& end)
+{
+    if(begin + 1 != end) {
+        return std::nullopt;
+    }
+    if(begin->type == TokenType::NUMBER_IDENTIFIER ||
+        begin->type == TokenType::STRING_IDENTIFIER) {
+        return *begin;
+    }
+    return std::nullopt;
+}
 
-void EvaluateTokens(const TokenList& tokens, const VariableMap& variables, StoredProgram& program)
+void EvaluateTokens(const TokenList& tokens, State& state)
 {
     if(tokens.size() == 0) {
         // Should evaluate to nothing.
@@ -737,13 +768,21 @@ void EvaluateTokens(const TokenList& tokens, const VariableMap& variables, Store
         // Line number - a program line
         auto line_number = std::get<int32_t>(tokens[0].value.value());
         auto line = TokenList(tokens.cbegin() + 1, tokens.cend());
-        program[line_number] = line;
+        state.program[line_number] = line;
         return;
     }
     if(tokens[0].type == TokenType::REMARK) {
         return;
     }
+    auto result = EvaluateIdentifier(tokens.cbegin(), tokens.cend());
+    if(result) {
+        auto token = result.value();
+        printf("identifier %s\n", std::get<std::string>(token.value.value()).c_str());
+    } else {
+        printf("failed\n");
+    }
 
+#if 0
     std::vector<std::pair<TokenIterator, TokenIterator>> subsets;
     TokenIterator begin = tokens.begin();
     TokenIterator colon = tokens.begin();
@@ -780,6 +819,7 @@ void EvaluateTokens(const TokenList& tokens, const VariableMap& variables, Store
             // ??
         }
     }
+#endif
 }
 
 #if 0
@@ -834,73 +874,6 @@ struct ASTString2Param : public ASTNode
     virtual ~ASTString2Param() {}
 };
 
-    }
-    virtual ~ASTBinary() {}
-};
-
-
-ASTNodePtr Parse(TokenIterator begin, TokenIterator end)
-{
-    // KEYWORD_OR_OPERATOR MULTIPLY, PLUS
-    // INTEGER, FLOAT, STRING_LITERAL
-
-    std::vector<ASTNodePtr> node_stack;
-
-    while(begin < end) {
-        auto token = *begin;
-        switch(token.type) {
-            case TokenType::KEYWORD_OR_OPERATOR:
-                switch(std::get<TokenType>(token.value.value())) {
-                    case TokenType::PLUS: {
-                        ASTNodePtr left = node_stack.back();
-                        node_stack.pop_back();
-                        ASTNodePtr right = Parse(begin + 1, end);
-                        auto plus = std::shared_ptr<ASTNode>(new ASTBinary(left, right, [](auto l, auto r){return r + l;}));
-                        node_stack.push_back(plus);
-                        break;
-                    }
-                    case TokenType::MULTIPLY: {
-                        ASTNodePtr left = node_stack.back();
-                        node_stack.pop_back();
-                        ASTNodePtr right = Parse(begin + 1, end);
-                        auto plus = std::shared_ptr<ASTNode>(new ASTBinary(left, right, [](auto l, auto r){return r * l;}));
-                        node_stack.push_back(plus);
-                        break;
-                    }
-                    default: abort(); break;
-                }
-                break;
-            case TokenType::INTEGER: {
-                ASTNodePtr constant = std::make_shared<ASTConstant>(std::get<int32_t>(token.value.value()));
-                node_stack.push_back(constant);
-                begin++;
-                break;
-            }
-            case TokenType::FLOAT: {
-                ASTNodePtr constant = std::make_shared<ASTConstant>(std::get<double>(token.value.value()));
-                node_stack.push_back(constant);
-                begin++;
-                break;
-            }
-            case TokenType::STRING_LITERAL: {
-                ASTNodePtr constant = std::make_shared<ASTConstant>(std::get<std::string>(token.value.value()));
-                node_stack.push_back(constant);
-                begin++;
-                break;
-            }
-            case TokenType::IDENTIFIER: {
-                // XXX missing subscripts
-                ASTNodePtr var = std::make_shared<ASTVariableInstance>(VariableReference(str_toupper(std::get<std::string>(token.value.value())), 0));
-                node_stack.push_back(var);
-                begin++;
-                break;
-            }
-            default: abort(); break;
-        }
-    }
-
-    return node_stack[0];
-}
 #endif
 
 std::string to_string(const Result& r)
@@ -929,8 +902,8 @@ int main(int argc, char **argv)
     StoredProgram program;
 
     VariableMap variables;
-    variables["A"] = 123.0;
-    variables["B"] = "Hello World!";
+    variables["A"] = {1, 1, {123.0}};
+    variables["B"] = {1, 1, {"Hello World!"}};
 
 #if 0
     if(false) {
@@ -964,6 +937,7 @@ int main(int argc, char **argv)
     }
 #endif
 
+    State state;
     if(true) {
         std::set<std::string> identifiers;
         while(fgets(line, sizeof(line), stdin) != NULL) {
@@ -972,16 +946,16 @@ int main(int argc, char **argv)
                 auto tokens = Tokenize(line);
                 print_tokenized(tokens);
                 for(const auto& token: tokens) {
-                    if(token.type == TokenType::IDENTIFIER) {
+                    if(token.type == TokenType::STRING_IDENTIFIER || token.type == TokenType::NUMBER_IDENTIFIER) {
                         auto value = token.value.value();
                         identifiers.insert(std::get<std::string>(value).c_str());
                     }
                 }
-                EvaluateTokens(tokens, variables, program);
+                EvaluateTokens(tokens, state);
             } catch (const TokenizeError& e) {
                 switch(e.type) {
                     case TokenizeError::SYNTAX:
-                        printf("syntax error at %d (\"%5s\")\n", e.position, line + e.position);
+                        printf("syntax error at %d (\"%*s\")\n", e.position, std::min(5, (int)(strlen(line) - e.position)), line + e.position);
                 }
 #if 0
             } catch (const InvalidLValueError& e) {
