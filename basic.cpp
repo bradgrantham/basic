@@ -13,7 +13,6 @@
 /*
 TO DO
 tokenize exponential notation
-2D variables; DIM, references
 */
 
 /*
@@ -99,9 +98,20 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     POWER,
 
 // need separate string and number identifiers and expressions?
+DID:
 identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns Token
 number ::= (FLOAT | INTEGER) // returns Token
 unary-op ::= (PLUS | MINUS | NOT) // returns Token
+integer-list ::= INTEGER (COMMA INTEGER)* // returns std::vector<int32_t>
+numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns Token
+parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
+
+DOING
+special numeric-expression that is just term
+variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+term ::= {unary-op} (INTEGER | FLOAT | variable-reference) // evaluates using unary-ops, returns Value
+
+TODO:
 variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
 term ::= {unary-op} (INTEGER | FLOAT | variable-reference) // evaluates using unary-ops, returns Value
 exp-op ::= term POWER term // evaluates, returns Value
@@ -111,8 +121,6 @@ relational-op ::= term (LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | MORE_THAN_E
 compare-op ::= term (EQUALS | NOT_EQUAL) (compare-op | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
 logic-op ::= term (AND | OR) numeric-expression // evaluates, returns Value
 numeric-expression ::= term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op // evaluates, returns Value
-parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
-numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns Token
 function ::= (numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN) |
              (LEN OPEN_PAREN string-expression CLOSE_PAREN) | 
              (VAL OPEN_PAREN string-expression CLOSE_PAREN) | 
@@ -123,8 +131,7 @@ function ::= (numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN) |
 expression ::= OPEN_PAREN expression CLOSE_PAREN | STRING_LITERAL | numeric-expression | function // evaluates, returns Value
 expression-list ::= expression (COMMA expression)* // returns std::vector<Value>
 variable-reference-list ::= variable-reference (COMMA | variable-reference)* // returns std::vector<VariableReference>
-integer-list ::= INTEGER (COMMA INTEGER)* // returns std::vector<int32_t>
-user-function ::= FUNCTION OPEN_PAREN expression expression-list CLOSE_PAREN // evaluates? returns Value
+user-function ::= FUNCTION OPEN_PAREN expression-list CLOSE_PAREN // evaluates? returns Value
 statement ::= PRINT (COMMA | SEMICOLON | expression)*
               [LET] variable-reference EQUAL expression
               INPUT [STRING_LITERAL SEMICOLON] variable-reference-list
@@ -746,17 +753,216 @@ Value EvaluateBinary(Value l, Value r, Op op)
     }
 #endif
 
-std::optional<Token> EvaluateIdentifier(const TokenIterator& begin, const TokenIterator& end)
+// For every Evaluate function operating on a pair of TokenIterators,
+// begin is incremented to the end of the sequence (the beginning of
+// the next sequence).
+
+std::optional<Token> EvaluateIdentifier(TokenIterator& begin, TokenIterator& end)
 {
     if(begin + 1 != end) {
         return std::nullopt;
     }
     if(begin->type == TokenType::NUMBER_IDENTIFIER ||
         begin->type == TokenType::STRING_IDENTIFIER) {
-        return *begin;
+        return *begin++;
     }
     return std::nullopt;
 }
+
+std::optional<Token> EvaluateNumber(TokenIterator& begin, TokenIterator& end)
+{
+    if(begin + 1 != end) {
+        return std::nullopt;
+    }
+    if(begin->type == TokenType::FLOAT ||
+        begin->type == TokenType::INTEGER) {
+        return *begin++;
+    }
+    return std::nullopt;
+}
+
+std::optional<Token> EvaluateUnaryOperator(TokenIterator& begin, TokenIterator& end)
+{
+    if(begin + 1 != end) {
+        return std::nullopt;
+    }
+    if(begin->type == TokenType::PLUS ||
+        begin->type == TokenType::NOT ||
+        begin->type == TokenType::MINUS) {
+        return *begin++;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::vector<int32_t>> EvaluateIntegerList(TokenIterator& begin, TokenIterator& end)
+{
+    std::vector<int32_t> ints;
+    if(begin->type != TokenType::INTEGER) {
+        return std::nullopt;
+    }
+    ints.push_back(std::get<int32_t>(begin->value.value()));
+
+    begin++;
+
+    while((begin + 1 < end) &&
+        (begin->type == TokenType::COMMA && (begin + 1)->type == TokenType::INTEGER))
+    {
+        ints.push_back(std::get<int32_t>((begin + 1)->value.value()));
+        begin += 2;
+    }
+
+    return ints;
+}
+
+std::optional<std::vector<Token>> EvaluateParameterList(TokenIterator& begin, TokenIterator& end)
+{
+    std::vector<Token> parameters;
+    if(begin->type != TokenType::NUMBER_IDENTIFIER) {
+        return std::nullopt;
+    }
+    parameters.push_back(*begin);
+    begin++;
+
+    while((begin + 1 < end) && 
+        (begin->type == TokenType::COMMA && (begin + 1)->type == TokenType::NUMBER_IDENTIFIER))
+    {
+        parameters.push_back(*(begin + 1));
+        begin += 2;
+    }
+
+    return parameters;
+}
+
+std::optional<Token> EvaluateOneToken(TokenIterator begin, TokenIterator end, const std::set<TokenType>& valid)
+{
+    if(begin + 1 != end) {
+        return std::nullopt;
+    }
+    if(valid.count(begin->type) > 0) {
+        return *begin++;
+    }
+    return std::nullopt;
+}
+
+
+#if 0
+// variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+
+std::optional<VariableReference> EvaluteVariableReference(TokenIterator& begin_, TokenIterator& end, State& state)
+{
+    auto begin = begin_;
+    auto identifier = EvaluateIdentifier(begin, end);
+    if(!result) {
+        return std::nullopt;
+    }
+
+    VariableReference ref{std::get<std::string>(begin->value.value()), 0, 0};
+    begin++;
+
+    if((begin == end) || (begin->type != TokenType::OPEN_PAREN)) {
+        begin_ = begin;
+        return ref;
+    }
+    if(begin->type != TokenType::OPEN_PAREN) {
+        return std::nullopt;
+    }
+}
+#endif
+
+std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, State& state)
+{
+    auto begin = begin_;
+    std::vector<TokenType> operators;
+    while(auto unary_op = EvaluateUnaryOperator(begin, end)) {
+        operators.push_back(unary_op->type);
+    }
+
+    if(begin + 1 != end) {
+        return std::nullopt;
+    }
+
+    if(begin->type == TokenType::INTEGER) {
+        int32_t v = std::get<int32_t>(begin->value.value());
+        for(auto it = operators.rbegin(); it != operators.rend(); it++) {
+            switch(*it) {
+                case TokenType::PLUS: break;
+                case TokenType::MINUS: v = -v; break;
+                case TokenType::NOT: v = -1 - v; break;
+                default: break;
+            }
+        }
+        begin_ = begin + 1;
+        return v;
+    }
+
+    if(begin->type == TokenType::FLOAT) {
+        double v = std::get<double>(begin->value.value());
+        for(auto it = operators.rbegin(); it != operators.rend(); it++) {
+            switch(*it) {
+                case TokenType::PLUS: break;
+                case TokenType::MINUS: v = -v; break;
+                case TokenType::NOT: v = -1 - static_cast<int>(trunc(v)); break;
+                default: break;
+            }
+        }
+        begin_ = begin + 1;
+        return v;
+    }
+
+#if 1
+    return std::nullopt;
+#else
+    auto result = EvaluteVariableReference(begin, end, state);
+    if(!result) {
+        return std::nullopt;
+    }
+    auto ref = result.value();
+    Value v = EvaluateVariable(ref, state.variables);
+    if(!is_igr(v) && !is_dbl(v) {
+        throw TypeMismatchError();
+    }
+    for(auto it = operators.rbegin(); it != operators.rend(); it++) {
+        switch(*it) {
+            case TokenType::PLUS:
+                break;
+            case TokenType::MINUS:
+                if(is_igr(v)) {
+                    v = - igr(v);
+                } else {
+                    v = - dbl(v);
+                }
+                break;
+            case TokenType::NOT:
+                if(is_igr(v)) {
+                    v = -1 - igr(v);
+                } else {
+                    v = -1 - static_cast<int32_t>(trunc(dbl(v)));
+                }
+                break;
+            default: break;
+        }
+    }
+    begin_ = begin;
+    return v;
+#endif
+}
+
+// XXX special version limited to just "term"
+std::optional<Value> EvaluateNumericExpression(TokenIterator& begin, TokenIterator& end, State& state)
+{
+    if(begin + 1 != end) {
+        return std::nullopt;
+    }
+
+    auto result = EvaluateTerm(begin, end, state);
+    if(result) {
+        return result;
+    }
+
+    // XXX Evaluate all others too
+    return std::nullopt;
+}
+// numeric-expression ::= term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op // evaluates, returns Value
 
 void EvaluateTokens(const TokenList& tokens, State& state)
 {
@@ -764,7 +970,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         // Should evaluate to nothing.
         return;
     }
-    if(tokens[0].type == TokenType::INTEGER) {
+    if(false && tokens[0].type == TokenType::INTEGER) {
         // Line number - a program line
         auto line_number = std::get<int32_t>(tokens[0].value.value());
         auto line = TokenList(tokens.cbegin() + 1, tokens.cend());
@@ -774,12 +980,118 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     if(tokens[0].type == TokenType::REMARK) {
         return;
     }
-    auto result = EvaluateIdentifier(tokens.cbegin(), tokens.cend());
-    if(result) {
-        auto token = result.value();
-        printf("identifier %s\n", std::get<std::string>(token.value.value()).c_str());
-    } else {
-        printf("failed\n");
+
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateIdentifier(begin, end);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto token = result.value();
+            printf("identifier %s\n", std::get<std::string>(token.value.value()).c_str());
+        } else {
+            printf("failed identifier\n");
+        }
+    }
+
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateNumber(begin, end);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto token = result.value();
+            auto v = token.value.value();
+            if(is_igr(v)) {
+                printf("integer %d\n", igr(v));
+            } else {
+                printf("float %f\n", dbl(v));
+            }
+        } else {
+            printf("failed number\n");
+        }
+    }
+
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateUnaryOperator(begin, end);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto token = result.value();
+            if(token.type == TokenType::MINUS) {
+                printf("MINUS\n");
+            } else if(token.type == TokenType::PLUS) {
+                printf("PLUS\n");
+            } else {
+                printf("NOT\n");
+            }
+        } else {
+            printf("failed unary operator\n");
+        }
+    }
+
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateIntegerList(begin, end);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto ints = result.value();
+            for(auto i: ints) {
+                printf("%d ", i);
+            }
+            printf("\n");
+        } else {
+            printf("failed integer list\n");
+        }
+    }
+
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateParameterList(begin, end);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto tokens = result.value();
+            for(const auto& t: tokens) {
+                printf("%s ", std::get<std::string>(t.value.value()).c_str());
+            }
+            printf("\n");
+        } else {
+            printf("failed parameter list\n");
+        }
+    }
+
+    std::set<TokenType> numeric_function_names { TokenType::ABS, TokenType::ATN, TokenType::COS, TokenType::EXP, TokenType::INT, TokenType::LOG, TokenType::RND, TokenType::SGN, TokenType::SIN, TokenType::SQR, TokenType::TAN, TokenType::TAB, TokenType::CHR, TokenType::STR };
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateOneToken(begin, end, numeric_function_names);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto token = result.value();
+            printf("numeric function %s\n", TokenTypeToStringMap[token.type]);
+        } else {
+            printf("failed numeric function\n");
+        }
+    }
+
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateNumericExpression(begin, end, state);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto v = result.value();
+            if(is_igr(v)) {
+                printf("expression integer %d\n", igr(v));
+            } else {
+                printf("expression float %f\n", dbl(v));
+            }
+        } else {
+            printf("failed numeric expression\n");
+        }
     }
 
 #if 0
@@ -801,7 +1113,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     while(!subsets.empty()) {
         auto [begin, end] = subsets.back();
         subsets.pop_back();
-        if((*begin).type == TokenType::OPEN_PAREN) {
+        if(begin->type == TokenType::OPEN_PAREN) {
             int count = 1;
             auto close = begin + 1;
             while(close != end && count > 0) {
