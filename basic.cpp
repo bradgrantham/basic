@@ -108,7 +108,7 @@ parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::v
 
 DOING
 special numeric-expression that is just term
-variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+variable-reference ::= identifier [OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN] // returns VariableReference
 term ::= {unary-op} (INTEGER | FLOAT | variable-reference) // evaluates using unary-ops, returns Value
 
 TODO:
@@ -453,6 +453,22 @@ struct Token
 typedef std::vector<Token> TokenList;
 typedef TokenList::const_iterator TokenIterator;
 
+struct VariableReferenceBoundsError
+{
+    std::string var;
+    int32_t i1;
+    int32_t i2;
+    int32_t d1;
+    int32_t d2;
+    VariableReferenceBoundsError(const std::string var, int32_t i1, int32_t i2, int32_t d1, int32_t d2) :
+        var(var),
+        i1(i1),
+        i2(i2),
+        d1(d1),
+        d2(d2)
+    {}
+};
+
 struct VariableNotFoundError
 {
     std::string var;
@@ -673,6 +689,9 @@ Value EvaluateVariable(const VariableReference& ref, const VariableMap& variable
         throw VariableNotFoundError(name);
     }
     auto [d1, d2, values] = iter->second;
+    if(i1 > d1 || i2 > d2) {
+        throw VariableReferenceBoundsError(name, i1, i2, d1, d2);
+    }
     return values[i2 * d1 + i1];
 }
 
@@ -709,59 +728,14 @@ Value EvaluateBinary(Value l, Value r, Op op)
     }
 }
 
-#if 0
-    TokenList value_stack;
-    TokenList operator_stack;
-    for(const auto& t: tokens) {
-        switch(t.type) {
-            case TokenType::INTEGER:
-            case TokenType::FLOAT:
-            case TokenType::STRING_LITERAL:
-            {
-                if(!operator_stack.empty()) {
-                    auto op = operator_stack.back();
-                    operator_stack.pop_back();
-                    switch(op.type) {
-                        case TokenType::PLUS: {
-                            auto left = value_stack.back().value.value();
-                            value_stack.pop_back();
-                            auto right = t.value.value();
-                            value_stack.push_back(EvaluateBinary(left, right, [](auto l, auto r){return r + l;}));
-                            break;
-                        }
-                        default: abort();
-                    }
-                } else {
-                    value_stack.push_back(t);
-                }
-                break;
-            }
-            case TokenType::PLUS:
-                operator_stack.push_back(t);
-                break;
-            case TokenType::NUMBER_IDENTIFIER:
-            case TokenType::STRING_IDENTIFIER:
-                operator_stack.push_back(t);
-                break;
-            default: abort();
-        }
-    }
-    if(!value_stack.empty()) {
-        auto result = value_stack.back();
-        value_stack.pop_back();
-        return result;
-    }
-#endif
-
 // For every Evaluate function operating on a pair of TokenIterators,
-// begin is incremented to the end of the sequence (the beginning of
-// the next sequence).
+// if evaluation is successful, begin is incremented to the end of
+// the sequence (the beginning of the next sequence).
 
 std::optional<Token> EvaluateIdentifier(TokenIterator& begin, TokenIterator& end)
 {
-    if(begin + 1 != end) {
-        return std::nullopt;
-    }
+    if(begin == end) { return std::nullopt; }
+
     if(begin->type == TokenType::NUMBER_IDENTIFIER ||
         begin->type == TokenType::STRING_IDENTIFIER) {
         return *begin++;
@@ -771,9 +745,8 @@ std::optional<Token> EvaluateIdentifier(TokenIterator& begin, TokenIterator& end
 
 std::optional<Token> EvaluateNumber(TokenIterator& begin, TokenIterator& end)
 {
-    if(begin + 1 != end) {
-        return std::nullopt;
-    }
+    if(begin == end) { return std::nullopt; }
+
     if(begin->type == TokenType::FLOAT ||
         begin->type == TokenType::INTEGER) {
         return *begin++;
@@ -783,9 +756,8 @@ std::optional<Token> EvaluateNumber(TokenIterator& begin, TokenIterator& end)
 
 std::optional<Token> EvaluateUnaryOperator(TokenIterator& begin, TokenIterator& end)
 {
-    if(begin + 1 != end) {
-        return std::nullopt;
-    }
+    if(begin == end) { return std::nullopt; }
+
     if(begin->type == TokenType::PLUS ||
         begin->type == TokenType::NOT ||
         begin->type == TokenType::MINUS) {
@@ -796,6 +768,8 @@ std::optional<Token> EvaluateUnaryOperator(TokenIterator& begin, TokenIterator& 
 
 std::optional<std::vector<int32_t>> EvaluateIntegerList(TokenIterator& begin, TokenIterator& end)
 {
+    if(begin == end) { return std::nullopt; }
+
     std::vector<int32_t> ints;
     if(begin->type != TokenType::INTEGER) {
         return std::nullopt;
@@ -816,6 +790,8 @@ std::optional<std::vector<int32_t>> EvaluateIntegerList(TokenIterator& begin, To
 
 std::optional<std::vector<Token>> EvaluateParameterList(TokenIterator& begin, TokenIterator& end)
 {
+    if(begin == end) { return std::nullopt; }
+
     std::vector<Token> parameters;
     if(begin->type != TokenType::NUMBER_IDENTIFIER) {
         return std::nullopt;
@@ -835,9 +811,8 @@ std::optional<std::vector<Token>> EvaluateParameterList(TokenIterator& begin, To
 
 std::optional<Token> EvaluateOneToken(TokenIterator begin, TokenIterator end, const std::set<TokenType>& valid)
 {
-    if(begin + 1 != end) {
-        return std::nullopt;
-    }
+    if(begin == end) { return std::nullopt; }
+
     if(valid.count(begin->type) > 0) {
         return *begin++;
     }
@@ -845,29 +820,67 @@ std::optional<Token> EvaluateOneToken(TokenIterator begin, TokenIterator end, co
 }
 
 
-#if 0
-// variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+std::optional<Value> EvaluateNumericExpression(TokenIterator& begin, TokenIterator& end, State& state);
 
-std::optional<VariableReference> EvaluteVariableReference(TokenIterator& begin_, TokenIterator& end, State& state)
+// variable-reference ::= identifier [OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN] // returns VariableReference
+std::optional<VariableReference> EvaluateVariableReference(TokenIterator& begin_, TokenIterator& end, State& state)
 {
     auto begin = begin_;
-    auto identifier = EvaluateIdentifier(begin, end);
-    if(!result) {
+    auto resultid = EvaluateIdentifier(begin, end);
+    if(!resultid) {
         return std::nullopt;
     }
+    auto identifier = *resultid;
 
-    VariableReference ref{std::get<std::string>(begin->value.value()), 0, 0};
-    begin++;
+    VariableReference ref{std::get<std::string>(identifier.value.value()), 0, 0};
 
     if((begin == end) || (begin->type != TokenType::OPEN_PAREN)) {
         begin_ = begin;
         return ref;
     }
-    if(begin->type != TokenType::OPEN_PAREN) {
+    begin++;
+
+    auto result = EvaluateNumericExpression(begin, end, state);
+    if(!result) {
         return std::nullopt;
     }
+    auto v = result.value();
+    if(is_igr(v)) {
+        std::get<1>(ref) = igr(v);
+    } else {
+        std::get<1>(ref) = static_cast<int32_t>(trunc(dbl(v)));
+    }
+
+    if(begin->type == TokenType::CLOSE_PAREN) {
+        begin++;
+        begin_ = begin;
+        return ref;
+    }
+
+    if(begin->type != TokenType::COMMA) {
+        return std::nullopt;
+    }
+    begin++;
+
+    result = EvaluateNumericExpression(begin, end, state);
+    if(!result) {
+        return std::nullopt;
+    }
+    v = result.value();
+    if(is_igr(v)) {
+        std::get<2>(ref) = igr(v);
+    } else {
+        std::get<2>(ref) = static_cast<int32_t>(trunc(dbl(v)));
+    }
+
+    if(begin->type != TokenType::CLOSE_PAREN) {
+        return std::nullopt;
+    }
+
+    begin++;
+    begin_ = begin;
+    return ref;
 }
-#endif
 
 std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, State& state)
 {
@@ -877,9 +890,7 @@ std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, Sta
         operators.push_back(unary_op->type);
     }
 
-    if(begin + 1 != end) {
-        return std::nullopt;
-    }
+    if(begin == end) { return std::nullopt; }
 
     if(begin->type == TokenType::INTEGER) {
         int32_t v = std::get<int32_t>(begin->value.value());
@@ -909,16 +920,13 @@ std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, Sta
         return v;
     }
 
-#if 1
-    return std::nullopt;
-#else
-    auto result = EvaluteVariableReference(begin, end, state);
+    auto result = EvaluateVariableReference(begin, end, state);
     if(!result) {
         return std::nullopt;
     }
     auto ref = result.value();
     Value v = EvaluateVariable(ref, state.variables);
-    if(!is_igr(v) && !is_dbl(v) {
+    if(!is_igr(v) && !is_dbl(v)) {
         throw TypeMismatchError();
     }
     for(auto it = operators.rbegin(); it != operators.rend(); it++) {
@@ -944,16 +952,11 @@ std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, Sta
     }
     begin_ = begin;
     return v;
-#endif
 }
 
 // XXX special version limited to just "term"
 std::optional<Value> EvaluateNumericExpression(TokenIterator& begin, TokenIterator& end, State& state)
 {
-    if(begin + 1 != end) {
-        return std::nullopt;
-    }
-
     auto result = EvaluateTerm(begin, end, state);
     if(result) {
         return result;
@@ -1074,6 +1077,19 @@ void EvaluateTokens(const TokenList& tokens, State& state)
             printf("numeric function %s\n", TokenTypeToStringMap[token.type]);
         } else {
             printf("failed numeric function\n");
+        }
+    }
+
+    {
+        auto begin = tokens.cbegin();
+        auto end = tokens.cend();
+        auto result = EvaluateVariableReference(begin, end, state);
+        printf("%zd consumed : ", begin - tokens.cbegin());
+        if(result) {
+            auto ref = result.value();
+            printf("variable reference %s, %d, %d\n", std::get<0>(ref).c_str(), std::get<1>(ref), std::get<2>(ref));
+        } else {
+            printf("failed variable reference\n");
         }
     }
 
@@ -1250,6 +1266,8 @@ int main(int argc, char **argv)
 #endif
 
     State state;
+    state.variables["A"] = {1, 1, {123.0, 0.0, 0.0, 0.0}};
+    state.variables["B$"] = {1, 1, {"Hello", "", "", ""}};
     if(true) {
         std::set<std::string> identifiers;
         while(fgets(line, sizeof(line), stdin) != NULL) {
@@ -1277,6 +1295,9 @@ int main(int argc, char **argv)
 #endif
             } catch (const VariableNotFoundError& e) {
                 printf("unknown variable \"%s\"\n", e.var.c_str());
+            } catch (const VariableReferenceBoundsError& e) {
+                printf("variable \"%s\" reference (%d, %d) out of bounds (%d, %d)\n", e.var.c_str(),
+                    e.i1, e.i2, e.d1, e.d2);
             }
         }
         if(false) {
