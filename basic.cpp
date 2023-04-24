@@ -13,6 +13,13 @@
 /*
 TO DO
 tokenize exponential notation
+really there are string variables and then there are number variables which have INT and FLOAT values
+    VariableValue should have a uniform type: string or number
+    string array variables have no numbers in them
+    number array variables have no strings in them
+    no point in having variant with all three as foundation class?
+    you already know number variables versus string variables
+    Or just break apart array variables?
 */
 
 /*
@@ -108,7 +115,7 @@ parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::v
 
 DOING
 special numeric-expression that is just term
-variable-reference ::= identifier [OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN] // returns VariableReference
+variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
 term ::= {unary-op} (INTEGER | FLOAT | variable-reference) // evaluates using unary-ops, returns Value
 
 TODO:
@@ -456,16 +463,24 @@ typedef TokenList::const_iterator TokenIterator;
 struct VariableReferenceBoundsError
 {
     std::string var;
-    int32_t i1;
-    int32_t i2;
-    int32_t d1;
-    int32_t d2;
-    VariableReferenceBoundsError(const std::string var, int32_t i1, int32_t i2, int32_t d1, int32_t d2) :
+    int32_t index;
+    int32_t size;
+    VariableReferenceBoundsError(const std::string var, int32_t index, int32_t size) :
         var(var),
-        i1(i1),
-        i2(i2),
-        d1(d1),
-        d2(d2)
+        index(index),
+        size(size)
+    {}
+};
+
+struct VariableDimensionError
+{
+    std::string var;
+    int used;
+    int expected;
+    VariableDimensionError(const std::string var, int used, int expected) :
+        var(var),
+        used(used),
+        expected(expected)
     {}
 };
 
@@ -666,10 +681,53 @@ bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
 bool is_dbl(const Value& v) { return std::holds_alternative<double>(v); }
 bool is_igr(const Value& v) { return std::holds_alternative<int32_t>(v); }
 
-typedef std::tuple<int32_t, int32_t, std::vector<Value>> VariableValue;
+struct VariableValue
+{
+    // A variable can have both a scalar and an array value
+    // e.g. A = 5: A(0) = 6: PRINT A, A(0) yields "5 6"
+
+    Value scalar;
+    std::vector<int32_t> sizes;
+    std::vector<Value> array;
+
+    void SetArraySizes(const std::vector<int32_t>& sizes_, const Value& init)
+    {
+        sizes = sizes_;
+        int32_t size = 1;
+        for(int32_t s: sizes) {
+            size *= (s + 1);
+        }
+        array.resize(size, init);
+    }
+
+    VariableValue(const Value& v) :
+        scalar(v)
+    {
+    }
+
+    VariableValue(const Value& v, const std::vector<int32_t>& sizes, const Value& init) :
+        scalar(v)
+    {
+        SetArraySizes(sizes, init);
+    }
+
+    VariableValue(const std::vector<int32_t>& sizes, const Value& init)
+    {
+        SetArraySizes(sizes, init);
+    }
+};
+
+struct VariableReference
+{
+    std::string name;
+    std::vector<int32_t> indices;
+    VariableReference(const std::string& name) : name(name)
+    {}
+    VariableReference(const std::string& name, const std::vector<int32_t>& indices) : name(name), indices(indices)
+    {}
+};
+
 typedef std::unordered_map<std::string, VariableValue> VariableMap;
-// Vector is indices into dimensioned variables
-typedef std::tuple<std::string, int32_t, int32_t> VariableReference;
 typedef std::optional<Value> Result;
 typedef std::map<int32_t, TokenList> StoredProgram;
 
@@ -680,19 +738,34 @@ struct State {
 };
 
 struct TypeMismatchError { };
+struct MissingCloseParenError { };
 
 Value EvaluateVariable(const VariableReference& ref, const VariableMap& variables)
 {
-    auto& [name, i1, i2] = ref;
-    auto iter = variables.find(name);
+    auto iter = variables.find(ref.name);
     if(iter == variables.end()) {
-        throw VariableNotFoundError(name);
+        throw VariableNotFoundError(ref.name);
     }
-    auto [d1, d2, values] = iter->second;
-    if(i1 > d1 || i2 > d2) {
-        throw VariableReferenceBoundsError(name, i1, i2, d1, d2);
+
+    auto& val = iter->second;
+    if(ref.indices.empty()) {
+        return val.scalar;
     }
-    return values[i2 * d1 + i1];
+
+    if(val.sizes.size() != ref.indices.size()) {
+        throw VariableDimensionError(ref.name, ref.indices.size(), val.sizes.size());
+    }
+
+    int32_t index = 0;
+    int32_t stride = 1;
+    for(size_t i = 0; i < val.sizes.size(); i++){
+        if(ref.indices[i] > val.sizes[i]) {
+            throw VariableReferenceBoundsError(ref.name, ref.indices[i], val.sizes[i]);
+        }
+        index = index + ref.indices[i] * stride;
+        stride = stride * val.sizes[i];
+    }
+    return val.array[index];
 }
 
 template <class Op>
@@ -832,7 +905,7 @@ std::optional<VariableReference> EvaluateVariableReference(TokenIterator& begin_
     }
     auto identifier = *resultid;
 
-    VariableReference ref{std::get<std::string>(identifier.value.value()), 0, 0};
+    VariableReference ref(std::get<std::string>(identifier.value.value()));
 
     if((begin == end) || (begin->type != TokenType::OPEN_PAREN)) {
         begin_ = begin;
@@ -840,41 +913,41 @@ std::optional<VariableReference> EvaluateVariableReference(TokenIterator& begin_
     }
     begin++;
 
+    auto& indices = ref.indices;
     auto result = EvaluateNumericExpression(begin, end, state);
     if(!result) {
         return std::nullopt;
     }
     auto v = result.value();
     if(is_igr(v)) {
-        std::get<1>(ref) = igr(v);
+        indices.push_back(igr(v));
     } else {
-        std::get<1>(ref) = static_cast<int32_t>(trunc(dbl(v)));
+        indices.push_back(static_cast<int32_t>(trunc(dbl(v))));
     }
 
-    if(begin->type == TokenType::CLOSE_PAREN) {
+    while(begin < end && begin->type != TokenType::CLOSE_PAREN)
+    {
+        if(begin->type != TokenType::COMMA) {
+            return std::nullopt;
+        }
+
         begin++;
-        begin_ = begin;
-        return ref;
-    }
 
-    if(begin->type != TokenType::COMMA) {
-        return std::nullopt;
-    }
-    begin++;
+        result = EvaluateNumericExpression(begin, end, state);
+        if(!result) {
+            return std::nullopt;
+        }
 
-    result = EvaluateNumericExpression(begin, end, state);
-    if(!result) {
-        return std::nullopt;
-    }
-    v = result.value();
-    if(is_igr(v)) {
-        std::get<2>(ref) = igr(v);
-    } else {
-        std::get<2>(ref) = static_cast<int32_t>(trunc(dbl(v)));
+        v = result.value();
+        if(is_igr(v)) {
+            indices.push_back(igr(v));
+        } else {
+            indices.push_back(static_cast<int32_t>(trunc(dbl(v))));
+        }
     }
 
     if(begin->type != TokenType::CLOSE_PAREN) {
-        return std::nullopt;
+        throw MissingCloseParenError();
     }
 
     begin++;
@@ -1087,7 +1160,11 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         printf("%zd consumed : ", begin - tokens.cbegin());
         if(result) {
             auto ref = result.value();
-            printf("variable reference %s, %d, %d\n", std::get<0>(ref).c_str(), std::get<1>(ref), std::get<2>(ref));
+            printf("variable reference %s ", ref.name.c_str());
+            for(auto i: ref.indices) {
+                printf("%d ", i);
+            }
+            printf("\n");
         } else {
             printf("failed variable reference\n");
         }
@@ -1227,47 +1304,12 @@ int main(int argc, char **argv)
     char line[1024];
     std::set<std::string> identifiers;
 
-    StoredProgram program;
-
-    VariableMap variables;
-    variables["A"] = {1, 1, {123.0}};
-    variables["B"] = {1, 1, {"Hello World!"}};
-
-#if 0
-    if(false) {
-        auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
-        auto strun = ASTString1Param(node, [](auto v){return static_cast<int32_t>(v.size());});
-        auto result = strun.evaluateR(variables, program);
-        printf("%s\n", to_string(result).c_str());
-    }
-
-    if(false) {
-        auto node = std::make_shared<ASTVariableInstance>(VariableReference("B", 0));
-        auto len = std::make_shared<ASTConstant>(5);
-        auto strun = ASTString2Param(node, len, [](auto v1, auto v2){return v1.substr(0, v2);});
-        auto result = strun.evaluateR(variables, program);
-        printf("%s\n", to_string(result).c_str());
-    }
-
-    if(false) {
-        auto node = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
-        auto un = ASTNumberUnary(node, [](auto v){return ! v;});
-        auto result = un.evaluateR(variables, program);
-        printf("%s\n", to_string(result).c_str());
-    }
-
-    if(true) {
-        auto left = std::make_shared<ASTVariableInstance>(VariableReference("A", 0));
-        auto right = std::make_shared<ASTConstant>(100);
-        auto bin = std::shared_ptr<ASTNode>(new ASTBinary(left, right, [](auto l, auto r){return r - l;}));
-        auto result = bin->evaluateR(variables, program);
-        printf("%s\n", to_string(result).c_str());
-    }
-#endif
-
     State state;
-    state.variables["A"] = {1, 1, {123.0, 0.0, 0.0, 0.0}};
-    state.variables["B$"] = {1, 1, {"Hello", "", "", ""}};
+    VariableValue val{123.0, {10}, 0.0};
+    state.variables.insert({"A", val});
+    VariableValue val2{"Hello", {10}, ""};
+    state.variables.insert({"B$", val2});
+
     if(true) {
         std::set<std::string> identifiers;
         while(fgets(line, sizeof(line), stdin) != NULL) {
@@ -1287,17 +1329,15 @@ int main(int argc, char **argv)
                     case TokenizeError::SYNTAX:
                         printf("syntax error at %d (\"%*s\")\n", e.position, std::min(5, (int)(strlen(line) - e.position)), line + e.position);
                 }
-#if 0
-            } catch (const InvalidLValueError& e) {
-                printf("expected an l-value but none available\n");
             } catch (const TypeMismatchError& e) {
                 printf("expected a number, encountered a string\n");
-#endif
             } catch (const VariableNotFoundError& e) {
                 printf("unknown variable \"%s\"\n", e.var.c_str());
+            } catch (const VariableDimensionError& e) {
+                printf("array access for variable \"%s\" used %d dimensions, expected %d\n", e.var.c_str(), e.used, e.expected);
             } catch (const VariableReferenceBoundsError& e) {
-                printf("variable \"%s\" reference (%d, %d) out of bounds (%d, %d)\n", e.var.c_str(),
-                    e.i1, e.i2, e.d1, e.d2);
+                printf("variable \"%s\" referenced %d out of array bounds %d\n", e.var.c_str(),
+                    e.index, e.size);
             }
         }
         if(false) {
