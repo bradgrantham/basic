@@ -104,7 +104,6 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     DIVIDE,
     POWER,
 
-// need separate string and number identifiers and expressions?
 DID:
 identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns Token
 number ::= (FLOAT | INTEGER) // returns Token
@@ -112,21 +111,20 @@ unary-op ::= (PLUS | MINUS | NOT) // returns Token
 integer-list ::= INTEGER (COMMA INTEGER)* // returns std::vector<int32_t>
 numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns Token
 parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
+variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+paren-numeric-expression ::= OPEN_PAREN numeric-expression CLOSE_PAREN
+term ::= {unary-op} (INTEGER | FLOAT | variable-reference | paren-numeric-expression) // evaluates using unary-ops, returns Value
+special numeric-expression that is just term
 
 DOING
-special numeric-expression that is just term
-variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
-term ::= {unary-op} (INTEGER | FLOAT | variable-reference) // evaluates using unary-ops, returns Value
+exp-op ::= term POWER (term | exp-op) // evaluates, returns Value 
 
 TODO:
-variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
-term ::= {unary-op} (INTEGER | FLOAT | variable-reference) // evaluates using unary-ops, returns Value
-exp-op ::= term POWER term // evaluates, returns Value
-product-op ::= term (MULTIPLY | DIVIDE | MODULO) (product-op | exp-op) // evaluates, returns Value
-sum-op ::= term (PLUS | MINUS) (sum-op | product-op | exp-op) // evaluates, returns Value
-relational-op ::= term (LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | MORE_THAN_EQUAL) (relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
-compare-op ::= term (EQUALS | NOT_EQUAL) (compare-op | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
-logic-op ::= term (AND | OR) numeric-expression // evaluates, returns Value
+product-op ::= term (MULTIPLY | DIVIDE | MODULO) (term | product-op | exp-op) // evaluates, returns Value
+sum-op ::= term (PLUS | MINUS) (term | sum-op | product-op | exp-op) // evaluates, returns Value
+relational-op ::= term (LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | MORE_THAN_EQUAL) (term | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
+compare-op ::= term (EQUALS | NOT_EQUAL) (term | compare-op | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
+logic-op ::= term (AND | OR) (term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
 numeric-expression ::= term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op // evaluates, returns Value
 function ::= (numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN) |
              (LEN OPEN_PAREN string-expression CLOSE_PAREN) | 
@@ -892,7 +890,6 @@ std::optional<Token> EvaluateOneToken(TokenIterator begin, TokenIterator end, co
     return std::nullopt;
 }
 
-
 std::optional<Value> EvaluateNumericExpression(TokenIterator& begin, TokenIterator& end, State& state);
 
 // variable-reference ::= identifier [OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN] // returns VariableReference
@@ -946,13 +943,42 @@ std::optional<VariableReference> EvaluateVariableReference(TokenIterator& begin_
         }
     }
 
-    if(begin->type != TokenType::CLOSE_PAREN) {
+    if(begin == end) {
         throw MissingCloseParenError();
     }
 
     begin++;
     begin_ = begin;
     return ref;
+}
+
+// paren-numeric-expression ::= OPEN_PAREN numeric-expression CLOSE_PAREN
+std::optional<Value> EvaluateParenNumericExpression(TokenIterator& begin_, TokenIterator& end, State& state)
+{
+    auto begin = begin_;
+
+    if(begin == end) { return std::nullopt; }
+
+    if(begin->type != TokenType::OPEN_PAREN) {
+        return std::nullopt;
+    }
+    begin++;
+    auto result = EvaluateNumericExpression(begin, end, state);
+    if(!result) {
+        return std::nullopt;
+    }
+    auto v = result.value();
+
+    if(begin == end) {
+        throw MissingCloseParenError();
+    }
+    if(begin->type != TokenType::CLOSE_PAREN) {
+        return std::nullopt;
+    }
+
+    begin++;
+    begin_ = begin;
+    return v;
 }
 
 std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, State& state)
@@ -993,12 +1019,23 @@ std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, Sta
         return v;
     }
 
+    Value v;
     auto result = EvaluateVariableReference(begin, end, state);
-    if(!result) {
-        return std::nullopt;
+
+    if(result) {
+
+        auto ref = result.value();
+        v = EvaluateVariable(ref, state.variables);
+
+    } else { 
+
+        auto result = EvaluateParenNumericExpression(begin, end, state);
+        if(!result) {
+            return std::nullopt;
+        }
+        v = result.value();
     }
-    auto ref = result.value();
-    Value v = EvaluateVariable(ref, state.variables);
+
     if(!is_igr(v) && !is_dbl(v)) {
         throw TypeMismatchError();
     }
@@ -1025,6 +1062,11 @@ std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, Sta
     }
     begin_ = begin;
     return v;
+}
+
+std::optional<Value> EvaluateExpOp(TokenIterator& begin_, TokenIterator& end, State& state)
+{
+
 }
 
 // XXX special version limited to just "term"
@@ -1186,45 +1228,6 @@ void EvaluateTokens(const TokenList& tokens, State& state)
             printf("failed numeric expression\n");
         }
     }
-
-#if 0
-    std::vector<std::pair<TokenIterator, TokenIterator>> subsets;
-    TokenIterator begin = tokens.begin();
-    TokenIterator colon = tokens.begin();
-    while(colon != tokens.end()) {
-        if((*colon).type == TokenType::COLON) {
-            if(begin != colon) {
-                subsets.push_back({begin, colon});
-            }
-            begin = colon;
-        }
-    }
-    if(begin != colon) {
-        subsets.push_back({begin, colon});
-    }
-
-    while(!subsets.empty()) {
-        auto [begin, end] = subsets.back();
-        subsets.pop_back();
-        if(begin->type == TokenType::OPEN_PAREN) {
-            int count = 1;
-            auto close = begin + 1;
-            while(close != end && count > 0) {
-                if((*close).type == TokenType::OPEN_PAREN) {
-                    count++;
-                } else if((*close).type == TokenType::CLOSE_PAREN) {
-                    count--;
-                }
-            }
-            if(close != end) {
-                subsets.push_back({close, end});
-            }
-            subsets.push_back({begin, close});
-        } else {
-            // ??
-        }
-    }
-#endif
 }
 
 #if 0
