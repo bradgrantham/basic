@@ -6,7 +6,7 @@
 #include <unordered_map>
 
 std::unordered_map<std::string, int> operator_precedence = {
-    { ")", -1001 }, 
+    { ")", -999 }, 
     { "(", -1000 }, 
     { "SIN", -1000 }, 
     { "COS", -1000 }, 
@@ -55,60 +55,49 @@ void dump_operands(const std::vector<float>& operands)
     printf("\n");
 }
 
-void reduce(std::vector<float>& operands, std::vector<std::string>& operators)
+float evaluate(const std::string& op, std::vector<float>& operands)
 {
-    assert(operators.size() > 0);
-    std::string op = pop(operators);
+    float right = pop(operands);
     if(op == ")") {
-        // pass, leave result on the operand stack
-    } else
-    if(op == "(") {
-        // pass, leave result on the operand stack
+        return right;
+    } else if(op == "(") {
+        return right;
     } else if(op == "^") {
-        auto [left, right] = pop2(operands);
-        operands.push_back(pow(left,right));
+        float left = pop(operands);
+        return pow(left,right);
     } else if(op == "*") {
-        auto [left, right] = pop2(operands);
-        operands.push_back(left * right);
+        float left = pop(operands);
+        return left * right;
     } else if(op == "/") {
-        auto [left, right] = pop2(operands);
-        operands.push_back(left / right);
+        float left = pop(operands);
+        return left / right;
     } else if(op == "+") {
-        auto [left, right] = pop2(operands);
-        operands.push_back(left + right);
+        float left = pop(operands);
+        return left + right;
     } else if(op == "-") {
-        auto [left, right] = pop2(operands);
-        operands.push_back(left - right);
+        float left = pop(operands);
+        return left - right;
     } else if(op == "SIN") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(sin(operand));
+        return sin(right);
     } else if(op == "COS") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(cos(operand));
+        return cos(right);
     } else if(op == "TAN") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(tan(operand));
+        return tan(right);
     } else if(op == "SGN") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(operand < 0 ? -1 : (operand > 0 ? 1 : 0));
+        return right < 0 ? -1 : (right > 0 ? 1 : 0);
     } else if(op == "INT") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(trunc(operand));
+        return trunc(right);
     } else if(op == "RND") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(drand48());
+        return drand48();
     } else if(op == "EXP") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(exp(operand));
+        return exp(right);
     } else if(op == "LOG") {
-        float operand = operands.back(); operands.pop_back();
-        operands.push_back(log(operand));
+        return log(right);
     } else {
         printf("internal error\n");
         abort();
     }
 }
-
 
 std::string str_toupper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -139,10 +128,9 @@ int main(int argc, char **argv)
             } else if(sscanf(line + cur, "%[()-+/*^]%n", word, &used) == 1) {
                 std::string op;
                 op.append(word, 1);
-                if(op != "(") {
-                    while((!operators.empty()) && (operator_precedence.at(operators.back()) > operator_precedence.at(op))) {
-                        reduce(operands, operators);
-                    }
+                while((!operators.empty()) && (operator_precedence.at(operators.back()) > operator_precedence.at(op))) {
+                    std::string higher = pop(operators);
+                    operands.push_back(evaluate(higher, operands));
                 }
                 operators.push_back(op);
                 used = 1;
@@ -163,7 +151,8 @@ int main(int argc, char **argv)
             cur += used;
         }
         while(!operators.empty()) {
-            reduce(operands, operators);
+            std::string op = pop(operators);
+            operands.push_back(evaluate(op, operands));
         }
         if(operands.size() > 0) {
             printf("%f\n", operands.back());
