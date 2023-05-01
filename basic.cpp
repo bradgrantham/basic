@@ -12,7 +12,8 @@
 
 /*
 TO DO
-tokenize exponential notation
+are all numbers in basic just float?
+    MBASIC says 2 ^ -1 is .5
 really there are string variables and then there are number variables which have INT and FLOAT values
     VariableValue should have a uniform type: string or number
     string array variables have no numbers in them
@@ -91,15 +92,14 @@ Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
     EQUAL,
     NOT_EQUAL,
     LESS_THAN,
-    MORE_THAN,
+    GREATER_THAN,
     LESS_THAN_EQUAL,
-    MORE_THAN_EQUAL,
+    GREATER_THAN_EQUAL,
     PLUS,
     MINUS,
     AND,
     OR,
     NOT,
-    MODULO,
     MULTIPLY,
     DIVIDE,
     POWER,
@@ -112,20 +112,15 @@ integer-list ::= INTEGER (COMMA INTEGER)* // returns std::vector<int32_t>
 numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns Token
 parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
 variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
-paren-numeric-expression ::= OPEN_PAREN numeric-expression CLOSE_PAREN
-term ::= {unary-op} (INTEGER | FLOAT | variable-reference | paren-numeric-expression) // evaluates using unary-ops, returns Value
 special numeric-expression that is just term
 
 DOING
-exp-op ::= term POWER (term | exp-op) // evaluates, returns Value 
 
 TODO:
-product-op ::= term (MULTIPLY | DIVIDE | MODULO) (term | product-op | exp-op) // evaluates, returns Value
-sum-op ::= term (PLUS | MINUS) (term | sum-op | product-op | exp-op) // evaluates, returns Value
-relational-op ::= term (LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | MORE_THAN_EQUAL) (term | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
-compare-op ::= term (EQUALS | NOT_EQUAL) (term | compare-op | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
-logic-op ::= term (AND | OR) (term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op) // evaluates, returns Value
-numeric-expression ::= term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op // evaluates, returns Value
+term ::= {unary-op} (INTEGER | FLOAT | STRING_LITERAL | variable-reference | function | numeric(paren-expression)) // evaluates using unary-ops, returns Value
+paren-expression ::= OPEN_PAREN expression CLOSE_PAREN
+numeric-expression ::= expression resulting in INTEGER or FLOAT
+string-expression ::= expression resulting in STRING_LITERAL
 function ::= (numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN) |
              (LEN OPEN_PAREN string-expression CLOSE_PAREN) | 
              (VAL OPEN_PAREN string-expression CLOSE_PAREN) | 
@@ -133,7 +128,8 @@ function ::= (numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN) |
              (RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN) | 
              (MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN)
              // evaluates, returns Value
-expression ::= OPEN_PAREN expression CLOSE_PAREN | STRING_LITERAL | numeric-expression | function // evaluates, returns Value
+operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
+expression ::= paren-expression | STRING_LITERAL | operation | function // evaluates, returns Value
 expression-list ::= expression (COMMA expression)* // returns std::vector<Value>
 variable-reference-list ::= variable-reference (COMMA | variable-reference)* // returns std::vector<VariableReference>
 user-function ::= FUNCTION OPEN_PAREN expression-list CLOSE_PAREN // evaluates? returns Value
@@ -167,10 +163,10 @@ vector<vector<TokenType>> PrecedenceTable =
 {
     // what about NOT and unary MINUS?
     { POWER },
-    { MULTIPLY, DIVIDE, MODULO, },
+    { MULTIPLY, DIVIDE, },
     { PLUS, MINUS, },
-    { LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, MORE_THAN_EQUAL },
-    { EQUALS, NOT_EQUAL},
+    { LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, GREATER_THAN_EQUAL },
+    { EQUAL, NOT_EQUAL},
     { AND, OR },
     // FUNCTIONS
 };
@@ -265,9 +261,9 @@ enum class TokenType
     TAN,
     NOT_EQUAL,
     LESS_THAN,
-    MORE_THAN,
+    GREATER_THAN,
     LESS_THAN_EQUAL,
-    MORE_THAN_EQUAL,
+    GREATER_THAN_EQUAL,
     OPEN_PAREN,
     CLOSE_PAREN,
     EQUAL,
@@ -275,7 +271,6 @@ enum class TokenType
     MINUS,
     MULTIPLY,
     DIVIDE,
-    MODULO,
     POWER,
     COMMA,
     COLON,
@@ -308,8 +303,8 @@ std::unordered_map<std::string, TokenType> StringToToken =
 {
     {"<>", TokenType::NOT_EQUAL},
     {"<=", TokenType::LESS_THAN_EQUAL},
-    {">=", TokenType::MORE_THAN_EQUAL},
-    {">", TokenType::MORE_THAN_EQUAL},
+    {">=", TokenType::GREATER_THAN_EQUAL},
+    {">", TokenType::GREATER_THAN_EQUAL},
     {"<", TokenType::LESS_THAN},
     {"(", TokenType::OPEN_PAREN},
     {")", TokenType::CLOSE_PAREN},
@@ -318,7 +313,6 @@ std::unordered_map<std::string, TokenType> StringToToken =
     {"-", TokenType::MINUS},
     {"*", TokenType::MULTIPLY},
     {"/", TokenType::DIVIDE},
-    {"%", TokenType::MODULO},
     {"^", TokenType::POWER},
     {",", TokenType::COMMA},
     {":", TokenType::COLON},
@@ -378,16 +372,15 @@ std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
     {TokenType::EQUAL, "="},
     {TokenType::NOT_EQUAL, "<>"},
     {TokenType::LESS_THAN_EQUAL, "<="},
-    {TokenType::MORE_THAN_EQUAL, ">="},
+    {TokenType::GREATER_THAN_EQUAL, ">="},
     {TokenType::LESS_THAN, "<"},
-    {TokenType::MORE_THAN, ">"},
+    {TokenType::GREATER_THAN, ">"},
     {TokenType::OPEN_PAREN, "("},
     {TokenType::CLOSE_PAREN, ")"},
     {TokenType::PLUS, "+"},
     {TokenType::MINUS, "-"},
     {TokenType::MULTIPLY, "*"},
     {TokenType::DIVIDE, "/"},
-    {TokenType::MODULO, "%"},
     {TokenType::POWER, "^"},
     {TokenType::COMMA, ","},
     {TokenType::COLON, ":"},
@@ -672,12 +665,30 @@ void print_tokenized(const TokenList& tokens)
     printf("\n");
 }
 
+int32_t to_basic_bool(bool b) { return b ? 0xFFFFFFFF : 0; }
 std::string str(const Value& v) { return std::get<std::string>(v); }
 double dbl(const Value& v) { return std::get<double>(v); }
 int32_t igr(const Value& v) { return std::get<int32_t>(v); }
 bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
 bool is_dbl(const Value& v) { return std::holds_alternative<double>(v); }
 bool is_igr(const Value& v) { return std::holds_alternative<int32_t>(v); }
+bool both_igr(const Value& v1, const Value& v2) { return is_igr(v1) && is_igr(v2); }
+double as_dbl(const Value& v)
+{
+    if(is_dbl(v)) {
+        return dbl(v);
+    } else {
+        return static_cast<double>(igr(v));
+    }
+}
+int32_t as_igr(const Value& v)
+{
+    if(is_igr(v)) {
+        return igr(v);
+    } else {
+        return static_cast<int32_t>(dbl(v));
+    }
+}
 
 struct VariableValue
 {
@@ -1064,22 +1075,104 @@ std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, Sta
     return v;
 }
 
-std::optional<Value> EvaluateExpOp(TokenIterator& begin_, TokenIterator& end, State& state)
-{
+// exp-op ::= term POWER numeric-expression // evaluates, returns Value 
+// product-op ::= term (MULTIPLY | DIVIDE ) numeric-expression // evaluates, returns Value
+// sum-op ::= term (PLUS | MINUS) numeric-expression // evaluates, returns Value
+// relational-op ::= term (LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL) numeric-expression // evaluates, returns Value
+// compare-op ::= term (EQUAL | NOT_EQUAL) numeric-expression // evaluates, returns Value
+// logic-op ::= term (AND | OR) numeric-expression // evaluates, returns Value
+// numeric-expression ::= exp-op | product-op | sum-op | relational-op | compare-op | logic-op | term // evaluates, returns Value
 
+Value EvaluateBinaryOperation(Value left, TokenType op, Value right)
+{
+    switch (op) {
+        case TokenType::POWER:
+            return pow(as_dbl(left), as_dbl(right));
+            break;
+        case TokenType::MULTIPLY:
+            return both_igr(left, right) ? (as_igr(left) * as_igr(right)) : (as_dbl(left) * as_dbl(right));
+            break;
+        case TokenType::DIVIDE:
+            return both_igr(left, right) ? (as_igr(left) / as_igr(right)) : (as_dbl(left) / as_dbl(right));
+            break;
+        case TokenType::PLUS:
+            return both_igr(left, right) ? (as_igr(left) + as_igr(right)) : (as_dbl(left) + as_dbl(right));
+            break;
+        case TokenType::MINUS:
+            return both_igr(left, right) ? (as_igr(left) - as_igr(right)) : (as_dbl(left) - as_dbl(right));
+            break;
+        case TokenType::LESS_THAN:
+            return to_basic_bool(both_igr(left, right) ? (as_igr(left) < as_igr(right)) : (as_dbl(left) < as_dbl(right)));
+            break;
+        case TokenType::GREATER_THAN:
+            return to_basic_bool(both_igr(left, right) ? (as_igr(left) > as_igr(right)) : (as_dbl(left) > as_dbl(right)));
+            break;
+        case TokenType::LESS_THAN_EQUAL:
+            return to_basic_bool(both_igr(left, right) ? (as_igr(left) <= as_igr(right)) : (as_dbl(left) <= as_dbl(right)));
+            break;
+        case TokenType::GREATER_THAN_EQUAL:
+            return to_basic_bool(both_igr(left, right) ? (as_igr(left) >= as_igr(right)) : (as_dbl(left) >= as_dbl(right)));
+            break;
+        case TokenType::EQUAL:
+            return to_basic_bool(both_igr(left, right) ? (as_igr(left) == as_igr(right)) : (as_dbl(left) == as_dbl(right)));
+            break;
+        case TokenType::NOT_EQUAL:
+            return to_basic_bool(both_igr(left, right) ? (as_igr(left) != as_igr(right)) : (as_dbl(left) != as_dbl(right)));
+            break;
+        case TokenType::AND:
+            return as_igr(left) & as_igr(right);
+            break;
+        case TokenType::OR:
+            return as_igr(left) | as_igr(right);
+            break;
+        default:
+            // won't reach
+            return 0;
+            break;
+    }
 }
 
-// XXX special version limited to just "term"
-std::optional<Value> EvaluateNumericExpression(TokenIterator& begin, TokenIterator& end, State& state)
+std::optional<Value> EvaluateNumericExpression(TokenIterator& begin_, TokenIterator& end, State& state)
 {
+    const std::vector<TokenType> binary_ops_not {
+        TokenType::OR,
+        TokenType::AND,
+        TokenType::NOT_EQUAL,
+        TokenType::EQUAL,
+        TokenType::GREATER_THAN_EQUAL,
+        TokenType::LESS_THAN_EQUAL,
+        TokenType::GREATER_THAN,
+        TokenType::LESS_THAN,
+        TokenType::MINUS,
+        TokenType::PLUS,
+        TokenType::DIVIDE,
+        TokenType::MULTIPLY,
+        TokenType::POWER};
+    const std::vector<TokenType> binary_ops {TokenType::POWER, TokenType::MULTIPLY, TokenType::DIVIDE, TokenType::PLUS, TokenType::MINUS, TokenType::LESS_THAN, TokenType::GREATER_THAN, TokenType::LESS_THAN_EQUAL, TokenType::GREATER_THAN_EQUAL, TokenType::EQUAL, TokenType::NOT_EQUAL, TokenType::AND, TokenType::OR};
+
+    auto begin = begin_;
     auto result = EvaluateTerm(begin, end, state);
-    if(result) {
-        return result;
+    if(!result) {
+        return std::nullopt;
     }
 
-    // XXX Evaluate all others too
-    return std::nullopt;
+    for(const auto& op: binary_ops) {
+        auto begin2 = begin;
+
+        if(begin2->type == op) {
+            begin2++;
+            auto right = EvaluateNumericExpression(begin2, end, state);
+            if(right) {
+                begin_ = begin2;
+                return EvaluateBinaryOperation(result.value(), op, right.value());
+            }
+        }
+    }
+
+    begin_ = begin;
+    return result;
 }
+
 // numeric-expression ::= term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op // evaluates, returns Value
 
 void EvaluateTokens(const TokenList& tokens, State& state)
