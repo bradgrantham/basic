@@ -8,9 +8,9 @@
 #include <unordered_map>
 #include <map>
 
+const bool debug_state = false;
+
 std::unordered_map<std::string, int> operator_precedence = {
-    { ")", -999 }, 
-    { "(", -1000 }, 
     { "SIN", -1000 }, 
     { "COS", -1000 }, 
     { "TAN", -1000 }, 
@@ -35,8 +35,20 @@ std::unordered_map<std::string, int> operator_precedence = {
     { "OR", 2 }, 
 };
 
+std::set<std::string> function_strings = {
+    "SIN",
+    "COS",
+    "TAN",
+    "SGN",
+    "RND",
+    "LOG",
+    "INT",
+    "EXP",
+    "TAB",
+};
+
 std::set<std::string> operator_strings = {
-    "(", ")", "^", "*", "/", "+", "-", "<", ">", ">=", "<=", "=", "<>", "AND", "OR", "NOT"
+    "^", "*", "/", "+", "-", "<", ">", ">=", "<=", "=", "<>", "AND", "OR", "NOT"
 };
 
 std::set<std::string> binary_operators = {
@@ -71,6 +83,21 @@ auto pop(Q& queue)
     auto back = queue.back();
     queue.pop_back();
     return back;
+}
+
+void dump_state(const std::vector<std::string>& operators, const std::vector<Value>& operands)
+{
+    printf("[");
+    for(auto op: operators) { printf("\"%s\" ", op.c_str()); }
+    printf("] (");
+    for(auto op: operands) {
+        if(is_num(op)) {
+            printf("%f ", num(op));
+        } else {
+            printf("\"%s\" ", str(op).c_str());
+        }
+    }
+    printf(")");
 }
 
 void dump_operators(const std::vector<std::string>& operators)
@@ -146,6 +173,7 @@ std::string str_toupper(std::string s) {
     return s;
 }
 
+
 std::optional<std::string> is_operator(const char *line, int *used)
 {
     for(int i = 1; i < 4; i++) {
@@ -160,24 +188,23 @@ std::optional<std::string> is_operator(const char *line, int *used)
     return std::nullopt;
 }
 
-bool is_binary_operator(const std::string op)
+bool is_binary_operator(const std::string& op)
 {
     return binary_operators.count(op) > 0;
 }
 
-bool is_unary_operator(const std::string op)
+bool is_unary_operator(const std::string& op)
 {
     return unary_operators.count(op) > 0;
 }
 
+bool is_function(const std::string &word)
+{
+    return function_strings.count(word) > 0;
+}
+
 bool is_higher_precedence(const std::string& op1, const std::string& op2)
 {
-    if(op2 == ")") {
-        return true;
-    }
-    if(op1 == "(") {
-        return false;
-    }
     bool both_binary = is_binary_operator(op1) && is_binary_operator(op2);
     bool is_higher = both_binary && (operator_precedence.at(op1) > operator_precedence.at(op2));
     return is_higher;
@@ -207,11 +234,11 @@ void evaluate_line(const char *line, State& state)
     int line_number;
     if(sscanf(line, " %d %n", &line_number, &used) == 1) {
         state.program[line_number] = line + used;
-        printf("%d \"%s\"\n", line_number, state.program.at(line_number).c_str());
+        // printf("%d \"%s\"\n", line_number, state.program.at(line_number).c_str());
         return;
     }
 
-    if(sscanf(line + cur, " %[A-Za-z]%n", word, &used) != 1) {
+    if(sscanf(line + cur, " %[A-Za-z] %n", word, &used) != 1) {
         printf("expected command to begin line\n");
     }
     cur += used;
@@ -221,10 +248,13 @@ void evaluate_line(const char *line, State& state)
 
     if(commands.count(command) == 0) {
         command = "LET";
-        if(sscanf(line + cur, " = %n", &used) != 1) {
+        if(line[cur] != '=')
+        // if(sscanf(line + cur, "=%n", &used) != 1)
+        {
             printf("expected \"=\" at %d, \"%s\"\n", cur, line + cur);
             abort();
         }
+        used = 1;
         variable = str_toupper(command);
         cur += used;
     } else if(command == "LET") {
@@ -256,6 +286,31 @@ void evaluate_line(const char *line, State& state)
             operators.push_back("(");
             next_operator_is_unary = true;
             used = 1;
+        } else if(line[cur] == ')') {
+            bool did_an_unwind = false;
+            while(!operators.empty() && operators.back() != "(") {
+                if(debug_state) { printf("unwinding to \"(\" :"); dump_state(operators, operands); puts("");}
+                did_an_unwind = true;
+                std::string op2 = pop(operators);
+                // printf("finishing lower-precedence operator %s before \")\"\n", op2.c_str());
+                operands.push_back(evaluate(op2, operands));
+            }
+            if(operators.empty()) {
+                printf("unexpected end parenthesis\n");
+                abort();
+            }
+            if(did_an_unwind) {
+                if(debug_state) { printf("after unwinding to \"(\" :"); dump_state(operators, operands); puts(""); }
+            }
+            operators.pop_back();
+            if(!operators.empty() && is_function(operators.back())) {
+                std::string func = pop(operators);
+                // printf("finishing function operator %s before \")\"\n", func.c_str());
+                operands.push_back(evaluate(func, operands));
+                // printf("after function %s before \")\"\n", func.c_str());
+            }
+            next_operator_is_unary = false;
+            used = 1;
         } else if(auto result = is_operator(line + cur, &used)) {
             auto op = *result;
             if(next_operator_is_unary) {
@@ -265,19 +320,25 @@ void evaluate_line(const char *line, State& state)
                     printf("unexpected operator in unary context: \"%s\"\n", op.c_str());
                     abort();
                 }
+                if(debug_state) { printf("unary operator :"); dump_state(operators, operands); puts(""); }
             } else {
+                bool did_an_unwind = false;
                 while(!operators.empty() && is_higher_precedence(operators.back(), op)) {
-                    dump_operators(operators);
-                    dump_operands(operands);
-                    printf("%s is higher precedence than %s\n", operators.back().c_str(), op.c_str());
+                    did_an_unwind = true;
+                    if(debug_state) { printf("unwinding higher precedence :"); dump_state(operators, operands); puts(""); }
                     std::string higher = pop(operators);
+                    // printf("%s is higher precedence than %s\n", higher.c_str(), op.c_str());
                     operands.push_back(evaluate(higher, operands));
+                }
+                if(did_an_unwind) {
+                    if(debug_state) { printf("after unwinding higher precedence :"); dump_state(operators, operands); puts(""); }
                 }
                 operators.push_back(op);
                 next_operator_is_unary = is_binary_operator(op);
             }
         } else if(sscanf(line + cur, "\"%[^\"]\"%n", word, &used) == 1) {
             operands.push_back(word);
+            if(debug_state) { printf("operand :"); dump_state(operators, operands); puts(""); }
             next_operator_is_unary = false;
         } else if(sscanf(line + cur, "%lf%n", &number, &used) == 1) {
             while(!unary_operators.empty()) {
@@ -293,14 +354,17 @@ void evaluate_line(const char *line, State& state)
                 }
             }
             operands.push_back(number);
+            if(debug_state) { printf("operand :"); dump_state(operators, operands); puts(""); }
             next_operator_is_unary = false;
         } else if(sscanf(line + cur, "%[A-Za-z]%n", word, &used) == 1) {
             std::string identifier{str_toupper(word)};
             if(operator_precedence.count(identifier) > 0) {
                 operators.push_back(identifier);
+                if(debug_state) { printf("operator :"); dump_state(operators, operands); puts(""); }
                 next_operator_is_unary = true;
             } else if(state.variables.count(identifier) > 0) {
                 operands.push_back(state.variables[identifier]);
+                if(debug_state) { printf("variable :"); dump_state(operators, operands); puts(""); }
                 next_operator_is_unary = false;
             } else {
                 printf("unknown word \"%s\"\n", identifier.c_str());
@@ -315,9 +379,11 @@ void evaluate_line(const char *line, State& state)
     }
     while(!operators.empty()) {
         std::string op = pop(operators);
-        printf("finishing lower-precedence operator %s\n", op.c_str());
+        if(debug_state) { printf("unwinding final operators :"); dump_state(operators, operands); puts(""); }
+        // printf("finishing lower-precedence operator %s\n", op.c_str());
         operands.push_back(evaluate(op, operands));
     }
+    if(debug_state) { printf("final state :"); dump_state(operators, operands); puts(""); }
 #if 0
     if(operands.size() > 0) {
         printf("%f\n", operands.back());
@@ -340,12 +406,12 @@ void evaluate_line(const char *line, State& state)
         }
         printf("\n");
     } else if(command == "LET") {
-        printf("set \"%s\" to ", variable.c_str());
+        // printf("set \"%s\" to ", variable.c_str());
         auto v = results.at(0);
         if(is_num(v)) {
-            printf("%f\n", num(v));
+            // printf("%f\n", num(v));
         } else {
-            printf("%s\n", str(v).c_str());
+            // printf("%s\n", str(v).c_str());
         }
         state.variables[variable] = v;
     } else if(command == "END") {
@@ -370,15 +436,15 @@ void evaluate_line(const char *line, State& state)
                     state.direct = true;
                     break;
                 }
-                printf("next line from %d yielded %d\n", state.current_line, next_line->first);
+                // printf("next line from %d yielded %d\n", state.current_line, next_line->first);
                 state.current_line = next_line->first;
             } else {
-                auto next_line = state.program.upper_bound(state.goto_line);
+                auto next_line = state.program.find(state.goto_line);
                 if(next_line == state.program.end()) {
                     printf("unknown line number %d\n", state.current_line);
                     abort();
                 }
-                printf("goto %d yielded %d\n", state.goto_line, next_line->first);
+                // printf("goto %d yielded %d\n", state.goto_line, next_line->first);
                 state.current_line = next_line->first;
             }
         }

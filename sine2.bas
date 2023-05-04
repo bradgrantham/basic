@@ -1,0 +1,5 @@
+10 D = 0
+20 print tab(30+INT(SIN(D*3.14/180.0)*30)); "BASIC"
+30 D = D + 15
+40 GOTO 20
+RUN
