@@ -63,12 +63,44 @@ std::set<std::string> commands = {
     "RUN", "LET", "PRINT", "DIM", "IF", "FOR", "NEXT", "ON", "GOTO", "GOSUB", "RETURN", "INPUT", "END", "WAIT", "DEF", "WIDTH", "CLEAR", "ORDER", "READ", "DATA"
 };
 
-typedef std::variant<std::string, double> Value;
+struct VariableReference
+{
+    std::string name;
+    std::vector<int> indices;
+    VariableReference(const std::string& name, const std::vector<int>& indices) :
+        name(name),
+        indices(indices)
+    {}
+};
+
+typedef std::variant<std::string, double, VariableReference> Value;
 double to_basic_bool(bool b) { return b ? -1 : 0; }
 std::string str(const Value& v) { return std::get<std::string>(v); }
 double num(const Value& v) { return std::get<double>(v); }
+VariableReference vref(const Value& v) { return std::get<VariableReference>(v); }
+bool is_vref(const Value& v) { return std::holds_alternative<VariableReference>(v); }
 bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
 bool is_num(const Value& v) { return std::holds_alternative<double>(v); }
+
+std::string to_str(const Value& v)
+{
+    if(is_vref(v)) {
+        auto ref = vref(v);
+        std::string s = ref.name;
+        if(ref.indices.size() > 0) {
+            s = s + "(" + std::to_string(ref.indices[0]);
+            for(auto it = ref.indices.begin() + 1; it < ref.indices.end(); it++) {
+                s = s + ", " + std::to_string(*it);
+            }
+            s = s + ")";
+        }
+        return s;
+    } else if(is_num(v)) {
+        return std::to_string(num(v));
+    } else {
+        return str(v);
+    }
+}
 
 std::tuple<Value, Value> pop2(std::vector<Value>& operands)
 {
@@ -203,6 +235,11 @@ bool is_function(const std::string &word)
     return function_strings.count(word) > 0;
 }
 
+bool is_command(const std::string &command)
+{
+    return commands.count(command) > 0;
+}
+
 bool is_higher_precedence(const std::string& op1, const std::string& op2)
 {
     bool both_binary = is_binary_operator(op1) && is_binary_operator(op2);
@@ -223,14 +260,21 @@ void evaluate_line(const char *line, State& state)
 {
     int cur = 0;
     std::vector<Value> operands;
-    std::vector<Value> results;
     std::vector<std::string> operators;
     std::vector<std::string> unary_operators;
+
+    auto skip_whitespace = [&]() {
+        while(line[cur] && isspace(line[cur])) {
+            cur++;
+        }
+    };
+
 
     bool next_operator_is_unary = true;
     char word[512];
     int used = 0;
 
+    skip_whitespace();
     int line_number;
     if(sscanf(line, " %d %n", &line_number, &used) == 1) {
         state.program[line_number] = line + used;
@@ -243,11 +287,10 @@ void evaluate_line(const char *line, State& state)
     }
     cur += used;
     std::string command{word};
-    std::string variable;
     command = str_toupper(command);
 
-    if(commands.count(command) == 0) {
-        command = "LET";
+    if(!is_command(command) && !is_function(command)) {
+        skip_whitespace();
         if(line[cur] != '=')
         // if(sscanf(line + cur, "=%n", &used) != 1)
         {
@@ -255,32 +298,28 @@ void evaluate_line(const char *line, State& state)
             abort();
         }
         used = 1;
-        variable = str_toupper(command);
+        operands.push_back(VariableReference(str_toupper(command), {}));
         cur += used;
+        command = "LET";
     } else if(command == "LET") {
         // XXX quick hack before making variable references
-        if(sscanf(line + cur, " %[A-Za-z] = %n", word, &used) != 1) {
+        skip_whitespace();
+        if(sscanf(line + cur, "%[A-Za-z] = %n", word, &used) != 1) {
             printf("expected variable name and \"=\" at %d, \"%s\"\n", cur, line + cur);
             abort();
         }
-        variable = str_toupper(word);
+        operands.push_back(VariableReference(str_toupper(word), {}));
         cur += used;
     }
 
     while(line[cur]) {
         double number = -666;
 
-        while(line[cur] && isspace(line[cur])) {
-            cur++;
-        }
+        skip_whitespace();
 
         if(line[cur] == ';') {
-            assert(operands.size() == 1);
-            results.push_back(pop(operands));
             used = 1;
         } else if(line[cur] == ',') {
-            assert(operands.size() == 1);
-            results.push_back(pop(operands));
             used = 1;
         } else if(line[cur] == '(') {
             operators.push_back("(");
@@ -386,18 +425,15 @@ void evaluate_line(const char *line, State& state)
     if(debug_state) { printf("final state :"); dump_state(operators, operands); puts(""); }
 #if 0
     if(operands.size() > 0) {
-        printf("%f\n", operands.back());
+        printf("%s\n", to_str(operands.back()).c_str());
     }
     if(operands.size() > 1) {
         printf("extra ");
         dump_operands(operands);
     }
 #else
-    if(operands.size() > 0) {
-        results.push_back(operands.back());
-    }
     if(command == "PRINT") {
-        for(auto v: results) {
+        for(auto v: operands) {
             if(is_num(v)) {
                 printf("%f ", num(v));
             } else {
@@ -406,14 +442,9 @@ void evaluate_line(const char *line, State& state)
         }
         printf("\n");
     } else if(command == "LET") {
-        // printf("set \"%s\" to ", variable.c_str());
-        auto v = results.at(0);
-        if(is_num(v)) {
-            // printf("%f\n", num(v));
-        } else {
-            // printf("%s\n", str(v).c_str());
-        }
-        state.variables[variable] = v;
+        auto ref = vref(operands.at(0));
+        auto value = operands.at(1);
+        state.variables[ref.name] = value;
     } else if(command == "END") {
         state.direct = true;
     } else if(command == "RUN") {
@@ -453,7 +484,7 @@ void evaluate_line(const char *line, State& state)
             printf("need to be in run mode for GOTO\n");
             abort();
         }
-        state.goto_line = static_cast<int>(trunc(num(results[0])));
+        state.goto_line = static_cast<int>(trunc(num(operands[0])));
     } else {
         printf("unimplemented command \"%s\"\n", command.c_str());
     }
