@@ -817,7 +817,7 @@ width-statement ::= WIDTH numeric-expression // returns void
 order-statement ::= ORDER INTEGER // returns void
 read-statement ::= READ variable-reference-list // returns void
 data-statement ::= DATA expression-list // returns void
-deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN parameter-list CLOSE_PAREN numeric-expression // returns void
+deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression // returns void
 return-statement ::= RETURN // returns void
 end-statement ::= END // returns void
 clear-statement ::= CLEAR // returns void
@@ -883,7 +883,27 @@ std::optional<std::vector<int>> ParseIntegerList(const TokenList& tokens, TokenI
     return integers;
 }
 
-// parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
+// number-identifier-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
+std::optional<std::vector<Value>> ParseNumberIdentifierList(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    std::vector<Value> identifiers;
+    if(cur_ >= end) { return {}; }
+    if(cur_->type != NUMBER_IDENTIFIER) {
+        return {};
+    }
+    auto cur = cur_;
+    identifiers.push_back(cur++->value);
+    while((cur < end) && (cur->type == COMMA)) {
+        cur++;
+        if(cur->type != NUMBER_IDENTIFIER) {
+            return {};
+        }
+        identifiers.push_back(cur++->value);
+    }
+    cur_ = cur;
+    return identifiers;
+}
+
 
 #if 0
 bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -977,6 +997,20 @@ void EvaluateTokens(const TokenList& tokens, State& state)
             printf("integer list (%zd) ", integers->size());
             for(auto i: *integers) {
                 printf("%d, ", i);
+            }
+            printf("\n");
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto identifiers = ParseNumberIdentifierList(tokens, cur, end)) {
+            printf("identifier list (%zd) ", identifiers->size());
+            for(auto v: *identifiers) {
+                printf("%s, ", str(v).c_str());
             }
             printf("\n");
             printf("    %zd tokens remaining \n", end - cur);
