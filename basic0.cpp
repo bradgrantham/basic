@@ -781,7 +781,6 @@ paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
 numeric-expression ::= expression that is a number // returns double
 integer-expression ::= numeric-expression that is an int // returns int
 string-expression ::= expression resulting in STRING // returns std::string?
-numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns TokenType
 numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
 len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
 val-function ::= VAL OPEN_PAREN string-expression CLOSE_PAREN
@@ -801,7 +800,6 @@ operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN |
 expression ::= paren-expression | STRING | operation | function // evaluates, returns Value
 expression-list ::= expression {COMMA expression} // returns std::vector<Value>
 variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
-integer ::= INTEGER // returns int
 print-statement ::= PRINT {COMMA | SEMICOLON | expression} // returns void
 let-statement ::= [LET] variable-reference EQUAL expression // returns void
 input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list // returns void
@@ -810,7 +808,6 @@ if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | state
 for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers? // returns void
 next-statement ::= NEXT [NUMBER_IDENTIFIER] // returns void
 on-statement ::= ON integer-expression (GOTO | GOSUB) integer-list // returns void
-goto-statement ::= GOTO integer // returns void
 gosub-statement ::= GOSUB integer // returns void
 wait-statement ::= WAIT numeric-expression // returns void
 width-statement ::= WIDTH numeric-expression // returns void
@@ -818,14 +815,10 @@ order-statement ::= ORDER INTEGER // returns void
 read-statement ::= READ variable-reference-list // returns void
 data-statement ::= DATA expression-list // returns void
 deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression // returns void
-return-statement ::= RETURN // returns void
-end-statement ::= END // returns void
-clear-statement ::= CLEAR // returns void
-run-statement ::= RUN // returns void
-stop-statement ::= STOP // returns void
 statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
 statement-list ::= statement {COLON statement} // returns void
-line ::= INTEGER statement-list EOL | statement-list EOL // returns void
+no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
+return-statement ::= RETURN // returns void
 */
 
 // std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
@@ -903,6 +896,23 @@ std::optional<std::vector<Value>> ParseNumberIdentifierList(const TokenList& tok
     cur_ = cur;
     return identifiers;
 }
+
+// numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns TokenType
+std::optional<TokenType> ParseNumericFunctionName(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {ABS, ATN, COS, EXP, INT, LOG, RND, SGN, SIN, SQR, TAN, TAB, CHR, STR})) {
+        return cur_++->type;
+    }
+    return {};
+}
+
+// integer ::= INTEGER // returns int
+// end-statement ::= END // returns void
+// clear-statement ::= CLEAR // returns void
+// run-statement ::= RUN // returns void
+// stop-statement ::= STOP // returns void
+// goto-statement ::= GOTO integer // returns void
 
 
 #if 0
@@ -1023,6 +1033,16 @@ void EvaluateTokens(const TokenList& tokens, State& state)
 
         if(auto ttype = ParseUnaryOp(tokens, cur, end)) {
             printf("unary op %d %s\n", *ttype, TokenTypeToStringMap[*ttype]);
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto ttype = ParseNumericFunctionName(tokens, cur, end)) {
+            printf("numeric function name %d %s\n", *ttype, TokenTypeToStringMap[*ttype]);
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
