@@ -217,45 +217,6 @@ std::set<TokenType> commands = {
     DATA,
 };
 
-struct VariableReference
-{
-    std::string name;
-    std::vector<int> indices;
-    VariableReference(const std::string& name, const std::vector<int>& indices) :
-        name(name),
-        indices(indices)
-    {}
-};
-
-typedef std::variant<std::string, double, VariableReference> Value;
-double to_basic_bool(bool b) { return b ? -1 : 0; }
-std::string str(const Value& v) { return std::get<std::string>(v); }
-double num(const Value& v) { return std::get<double>(v); }
-VariableReference vref(const Value& v) { return std::get<VariableReference>(v); }
-bool is_vref(const Value& v) { return std::holds_alternative<VariableReference>(v); }
-bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
-bool is_num(const Value& v) { return std::holds_alternative<double>(v); }
-
-std::string to_str(const Value& v)
-{
-    if(is_vref(v)) {
-        auto ref = vref(v);
-        std::string s = ref.name;
-        if(ref.indices.size() > 0) {
-            s = s + "(" + std::to_string(ref.indices[0]);
-            for(auto it = ref.indices.begin() + 1; it < ref.indices.end(); it++) {
-                s = s + ", " + std::to_string(*it);
-            }
-            s = s + ")";
-        }
-        return s;
-    } else if(is_num(v)) {
-        return std::to_string(num(v));
-    } else {
-        return str(v);
-    }
-}
-
 
 std::unordered_map<std::string, TokenType> StringToToken =
 {
@@ -413,6 +374,19 @@ std::string str_toupper(std::string s) {
     return s;
 }
 
+struct VariableReference
+{
+    std::string name;
+    std::vector<int> indices;
+    VariableReference(const std::string& name, const std::vector<int>& indices) :
+        name(name),
+        indices(indices)
+    {}
+};
+
+typedef std::variant<std::string, double, VariableReference> Value;
+double to_basic_bool(bool b) { return b ? -1 : 0; }
+
 struct Token
 {
     public:
@@ -423,7 +397,16 @@ struct Token
         Token(TokenType type, const std::string& value) : type(type), value(value) {}
         Token(double value) : type(NUMBER), value(value) {}
         operator TokenType() {return type; }
+        operator Value() {return value; }
 };
+
+std::string str(const Value& v) { return std::get<std::string>(v); }
+double num(const Value& v) { return std::get<double>(v); }
+VariableReference vref(const Value& v) { return std::get<VariableReference>(v); }
+bool is_vref(const Value& v) { return std::holds_alternative<VariableReference>(v); }
+bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
+bool is_num(const Value& v) { return std::holds_alternative<double>(v); }
+
 
 typedef std::vector<Token> TokenList;
 typedef TokenList::const_iterator TokenIterator;
@@ -778,20 +761,12 @@ std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, Token
     return std::nullopt;
 }
 
-std::optional<Token> ParseOnly(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, TokenType expect)
+bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
 {
-    if(cur >= tokens.end()) { throw ParseError(tokens); }
-    if(cur->type == expect) {
-        return (cur++)->type;
-    }
-    return std::nullopt;
+    return expect.count(type) > 0;
 }
 
 /* 
-number ::= NUMBER // returns double
-unary-op ::= (PLUS | MINUS | NOT) // returns TokenType
-integer-list ::= INTEGER {COMMA INTEGER} // returns std::vector<int>
-parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
 variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
 term ::= {unary-op} (INTEGER | FLOAT | STRING | variable-reference | function | paren-expression) // evaluates using unary-ops, returns Value
 paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
@@ -847,19 +822,40 @@ line ::= INTEGER statement-list EOL | statement-list EOL // returns void
 
 // std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
 // std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
-// std::optional<Token> ParseOnly(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, TokenType expect)
+// bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
 
-// identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns std::string?
-std::optional<std::string> ParseIdentifier(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+// identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns optional std::string
+std::optional<Value> ParseIdentifier(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    auto cur = cur_;
-    if(auto results = ParseAny(tokens, cur, end, state, {NUMBER_IDENTIFIER, STRING_IDENTIFIER})) {
-        auto v = cur->value;
-        cur++;
-        return str(v);
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {NUMBER_IDENTIFIER, STRING_IDENTIFIER})) {
+        return cur_++->value;
     }
     return {};
 }
+
+// number ::= NUMBER // returns optional double
+std::optional<Value> ParseNumber(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return {}; }
+    if(cur_->type == NUMBER) {
+        return cur_++->value;
+    }
+    return {};
+}
+
+// unary-op ::= (PLUS | MINUS | NOT) // returns TokenType
+std::optional<TokenType> ParseUnaryOp(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {PLUS, MINUS, NOT})) {
+        return cur_++->type;
+    }
+    return {};
+}
+
+// integer-list ::= INTEGER {COMMA INTEGER} // returns std::vector<int>
+// parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
 
 #if 0
 bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -886,10 +882,29 @@ bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator
 }
 #endif
 
+std::string to_str(const Value& v)
+{
+    if(is_vref(v)) {
+        auto ref = vref(v);
+        std::string s = ref.name;
+        if(ref.indices.size() > 0) {
+            s = s + "(" + std::to_string(ref.indices[0]);
+            for(auto it = ref.indices.begin() + 1; it < ref.indices.end(); it++) {
+                s = s + ", " + std::to_string(*it);
+            }
+            s = s + ")";
+        }
+        return s;
+    } else if(is_num(v)) {
+        return std::to_string(num(v));
+    } else {
+        return str(v);
+    }
+}
+
 void EvaluateTokens(const TokenList& tokens, State& state)
 {
     TokenIterator cur = tokens.begin();
-    TokenIterator end = tokens.end();
     std::vector<Value> operands;
     std::vector<std::string> operators;
     std::vector<std::string> unary_operators;
@@ -897,7 +912,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     bool next_operator_is_unary = true;
 
     if(cur >= tokens.end()) { throw ParseError(tokens); }
-    if(cur->type == NUMBER) {
+    /* XXX need to re-enable for line numbers */ if(false && cur->type == NUMBER) {
         int line_number = static_cast<int>(num(tokens.at(0).value));
         auto line = state.program[line_number];
         std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
@@ -906,9 +921,33 @@ void EvaluateTokens(const TokenList& tokens, State& state)
 
     /* XXX */ PrintTokenized(tokens);
 
-    if(auto results = ParseIdentifier(tokens, cur, end, state)) {
-        printf("identifier \"%s\"\n", results->c_str());
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto identifier = ParseIdentifier(tokens, cur, end, state)) {
+            printf("identifier \"%s\"\n", str(*identifier).c_str());
+        }
     }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto number = ParseNumber(tokens, cur, end, state)) {
+            printf("number %f\n", num(*number));
+        }
+    }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto ttype = ParseUnaryOp(tokens, cur, end, state)) {
+            printf("unary op %d %s\n", *ttype, TokenTypeToStringMap[*ttype]);
+        }
+    }
+
 #if 0
     while(line[cur]) {
         double number = -666;
