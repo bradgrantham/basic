@@ -835,7 +835,7 @@ std::optional<Value> ParseIdentifier(const TokenList& tokens, TokenIterator& cur
     return {};
 }
 
-// number ::= DOUBLE | INTEGER// returns optional double
+// number ::= DOUBLE | INTEGER // returns optional Value
 std::optional<Value> ParseNumber(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
 {
     if(cur_ >= end) { return {}; }
@@ -907,13 +907,21 @@ std::optional<TokenType> ParseNumericFunctionName(const TokenList& tokens, Token
     return {};
 }
 
-// integer ::= INTEGER // returns int
+// integer ::= INTEGER // returns optional int32_t
+std::optional<Value> ParseInteger(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(cur_->type == INTEGER) {
+        return cur_++->value;
+    }
+    return {};
+}
+
 // end-statement ::= END // returns void
 // clear-statement ::= CLEAR // returns void
 // run-statement ::= RUN // returns void
 // stop-statement ::= STOP // returns void
 // goto-statement ::= GOTO integer // returns void
-
 
 #if 0
 bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -1009,6 +1017,16 @@ void EvaluateTokens(const TokenList& tokens, State& state)
                 printf("%d, ", i);
             }
             printf("\n");
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto integer = ParseInteger(tokens, cur, end)) {
+            printf("integer %d\n", igr(*integer));
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
