@@ -21,7 +21,8 @@ enum TokenType
 {
     STRING_IDENTIFIER,
     NUMBER_IDENTIFIER,
-    NUMBER,
+    DOUBLE,
+    INTEGER,
     STRING,
     REMARK,  		 // Remark (comment) starting with REM keyword
     ABS,
@@ -395,13 +396,15 @@ struct Token
 
         Token(TokenType type) : type(type) {}
         Token(TokenType type, const std::string& value) : type(type), value(value) {}
-        Token(double value) : type(NUMBER), value(value) {}
+        Token(int32_t value) : type(INTEGER), value(static_cast<double>(value)) {}
+        Token(double value) : type(DOUBLE), value(value) {}
         operator TokenType() {return type; }
         operator Value() {return value; }
 };
 
 std::string str(const Value& v) { return std::get<std::string>(v); }
 double num(const Value& v) { return std::get<double>(v); }
+int32_t igr(const Value& v) { return static_cast<int32_t>(std::get<double>(v)); }
 VariableReference vref(const Value& v) { return std::get<VariableReference>(v); }
 bool is_vref(const Value& v) { return std::holds_alternative<VariableReference>(v); }
 bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
@@ -548,9 +551,14 @@ void PrintTokenized(const TokenList& tokens, int emphasize = -1)
                 printf("%s ", std::get<std::string>(v).c_str());
                 break;
             }
-            case NUMBER: {
+            case DOUBLE: {
                 auto v = t.value;
                 printf("%f ", std::get<double>(v));
+                break;
+            }
+            case INTEGER: {
+                auto v = t.value;
+                printf("%d ", igr(v));
                 break;
             }
             case REMARK: {
@@ -793,7 +801,7 @@ operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN |
 expression ::= paren-expression | STRING | operation | function // evaluates, returns Value
 expression-list ::= expression {COMMA expression} // returns std::vector<Value>
 variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
-integer ::= NUMBER that is an integer // returns int
+integer ::= INTEGER // returns int
 print-statement ::= PRINT {COMMA | SEMICOLON | expression} // returns void
 let-statement ::= [LET] variable-reference EQUAL expression // returns void
 input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list // returns void
@@ -825,7 +833,7 @@ line ::= INTEGER statement-list EOL | statement-list EOL // returns void
 // bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
 
 // identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns optional std::string
-std::optional<Value> ParseIdentifier(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+std::optional<Value> ParseIdentifier(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
 {
     if(cur_ >= end) { return {}; }
     if(IsOneOf(cur_->type, {NUMBER_IDENTIFIER, STRING_IDENTIFIER})) {
@@ -834,18 +842,18 @@ std::optional<Value> ParseIdentifier(const TokenList& tokens, TokenIterator& cur
     return {};
 }
 
-// number ::= NUMBER // returns optional double
-std::optional<Value> ParseNumber(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+// number ::= DOUBLE | INTEGER// returns optional double
+std::optional<Value> ParseNumber(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
 {
     if(cur_ >= end) { return {}; }
-    if(cur_->type == NUMBER) {
+    if(IsOneOf(cur_->type, {DOUBLE, INTEGER})) {
         return cur_++->value;
     }
     return {};
 }
 
 // unary-op ::= (PLUS | MINUS | NOT) // returns TokenType
-std::optional<TokenType> ParseUnaryOp(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+std::optional<TokenType> ParseUnaryOp(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
 {
     if(cur_ >= end) { return {}; }
     if(IsOneOf(cur_->type, {PLUS, MINUS, NOT})) {
@@ -855,6 +863,26 @@ std::optional<TokenType> ParseUnaryOp(const TokenList& tokens, TokenIterator& cu
 }
 
 // integer-list ::= INTEGER {COMMA INTEGER} // returns std::vector<int>
+std::optional<std::vector<int>> ParseIntegerList(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    std::vector<int> integers;
+    if(cur_ >= end) { return {}; }
+    if(cur_->type != INTEGER) {
+        return {};
+    }
+    auto cur = cur_;
+    integers.push_back(igr(cur++->value));
+    while((cur < end) && (cur->type == COMMA)) {
+        cur++;
+        if(cur->type != INTEGER) {
+            return {};
+        }
+        integers.push_back(igr(cur++->value));
+    }
+    cur_ = cur;
+    return integers;
+}
+
 // parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
 
 #if 0
@@ -912,7 +940,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     bool next_operator_is_unary = true;
 
     if(cur >= tokens.end()) { throw ParseError(tokens); }
-    /* XXX need to re-enable for line numbers */ if(false && cur->type == NUMBER) {
+    /* XXX need to re-enable for line numbers */ if(false && cur->type == INTEGER) {
         int line_number = static_cast<int>(num(tokens.at(0).value));
         auto line = state.program[line_number];
         std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
@@ -925,8 +953,9 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         TokenIterator cur = tokens.begin();
         TokenIterator end = tokens.end();
 
-        if(auto identifier = ParseIdentifier(tokens, cur, end, state)) {
+        if(auto identifier = ParseIdentifier(tokens, cur, end)) {
             printf("identifier \"%s\"\n", str(*identifier).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
@@ -934,8 +963,9 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         TokenIterator cur = tokens.begin();
         TokenIterator end = tokens.end();
 
-        if(auto number = ParseNumber(tokens, cur, end, state)) {
+        if(auto number = ParseNumber(tokens, cur, end)) {
             printf("number %f\n", num(*number));
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
@@ -943,8 +973,23 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         TokenIterator cur = tokens.begin();
         TokenIterator end = tokens.end();
 
-        if(auto ttype = ParseUnaryOp(tokens, cur, end, state)) {
+        if(auto integers = ParseIntegerList(tokens, cur, end)) {
+            printf("integer list (%zd) ", integers->size());
+            for(auto i: *integers) {
+                printf("%d, ", i);
+            }
+            printf("\n");
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto ttype = ParseUnaryOp(tokens, cur, end)) {
             printf("unary op %d %s\n", *ttype, TokenTypeToStringMap[*ttype]);
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
