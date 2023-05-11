@@ -1,253 +1,30 @@
-#include <string>
-#include <variant>
-#include <optional>
-#include <algorithm>
+#include <cstdio>
 #include <cctype>
-#include <iostream>
-#include <sstream>
+#include <string>
 #include <vector>
-#include <map>
-#include <unordered_map>
 #include <set>
+#include <algorithm>
+#include <optional>
+#include <unordered_map>
+#include <map>
 
 /*
-TO DO
-are all numbers in basic just float?
-    MBASIC says 2 ^ -1 is .5
-really there are string variables and then there are number variables which have INT and FLOAT values
-    VariableValue should have a uniform type: string or number
-    string array variables have no numbers in them
-    number array variables have no strings in them
-    no point in having variant with all three as foundation class?
-    you already know number variables versus string variables
-    Or just break apart array variables?
+replace all character parsing with Token
+use Variant with visit lambda with if-else chain
+do much better error reporting for parsing errors
+may not need stoi in Tokenize anymore
 */
 
-/*
-  * identifiers
-  * keywords - greedy
-  * are functions keywords or identifiers?
-Slices through functionality
-  * program line
-  * run program line
-  * immediate command
-  * parse variable
-  * change variable
-  * call function
-  * control flow
+const bool debug_state = false;
 
-IDENTIFIER, INTEGER, FLOAT, STRING_LITERAL are all atoms, already tokenized
-Buuut, what about IDENTIFIER OPEN_PAREN list CLOSE_PAREN?
-* first token is an INTEGER - line is a program line, right is all statements
-* COLON
-* OPEN_PAREN - parse to next matching CLOSE_PAREN,
-* reserved words (what about multiple reserved words?)
-    DIM,
-    LET,
-    IF,
-    THEN,
-    ELSE,
-    FOR,
-    TO,
-    STEP,
-    NEXT,
-    ON,
-    GOTO,
-    GOSUB,
-    RETURN,
-    PRINT,
-    INPUT,
-    END,
-    WAIT,
-    DEF, // But this is always followed by FN or in later basics INT, SNG, DBL, or STR
-    WIDTH,
-    CLEAR,
-    ORDER,
-    READ,
-    DATA,
-* separators
-    COMMA,
-    SEMICOLON,
-* functions
-    ABS,
-    ATN,
-    COS,
-    EXP,
-    INT,
-    LOG,
-    RND,
-    SGN,
-    SIN,
-    SQR,
-    TAN,
-    LEFT,
-    RIGHT,
-    MID,
-    LEN,
-    STR,
-    TAB,
-    CHR,
-    VAL,
-* operators in reverse precedence order
-    EQUAL,
-    NOT_EQUAL,
-    LESS_THAN,
-    GREATER_THAN,
-    LESS_THAN_EQUAL,
-    GREATER_THAN_EQUAL,
-    PLUS,
-    MINUS,
-    AND,
-    OR,
-    NOT,
-    MULTIPLY,
-    DIVIDE,
-    POWER,
-
-DID:
-identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns Token
-number ::= (FLOAT | INTEGER) // returns Token
-unary-op ::= (PLUS | MINUS | NOT) // returns Token
-integer-list ::= INTEGER (COMMA INTEGER)* // returns std::vector<int32_t>
-numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns Token
-parameter-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
-variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
-special numeric-expression that is just term
-
-DOING
-
-TODO:
-term ::= {unary-op} (INTEGER | FLOAT | STRING_LITERAL | variable-reference | function | numeric(paren-expression)) // evaluates using unary-ops, returns Value
-paren-expression ::= OPEN_PAREN expression CLOSE_PAREN
-numeric-expression ::= expression resulting in INTEGER or FLOAT
-string-expression ::= expression resulting in STRING_LITERAL
-function ::= (numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN) |
-             (LEN OPEN_PAREN string-expression CLOSE_PAREN) | 
-             (VAL OPEN_PAREN string-expression CLOSE_PAREN) | 
-             (LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN) | 
-             (RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN) | 
-             (MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN)
-             // evaluates, returns Value
-operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
-expression ::= paren-expression | STRING_LITERAL | operation | function // evaluates, returns Value
-expression-list ::= expression (COMMA expression)* // returns std::vector<Value>
-variable-reference-list ::= variable-reference (COMMA | variable-reference)* // returns std::vector<VariableReference>
-user-function ::= FUNCTION OPEN_PAREN expression-list CLOSE_PAREN // evaluates? returns Value
-statement ::= PRINT (COMMA | SEMICOLON | expression)*
-              [LET] variable-reference EQUAL expression
-              INPUT [STRING_LITERAL SEMICOLON] variable-reference-list
-              DIM identifier OPEN_PAREN integer-list CLOSE_PAREN
-              IF expression THEN (INTEGER | statement) [ELSE (INTEGER | statement)]
-              FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers?
-              NEXT [NUMBER_IDENTIFIER]
-              ON numeric-expression (GOTO | GOSUB) integer-list
-              (GOTO | GOSUB) INTEGER
-              WAIT numeric-expression
-              WIDTH numeric-expression
-              ORDER INTEGER
-              READ variable-reference-list
-              DATA expression-list
-              DEF FUNCTION OPEN_PAREN parameter-list CLOSE_PAREN numeric-expression
-              RETURN
-              END
-              CLEAR
-              RUN
-              STOP
-              // does the work, returns void
-              // some of these are not valid in direct mode, like INPUT
-              // READ is discarded when not in direct
-statement-list ::= statement (COLON statement)* // returns void
-line ::= INTEGER statement-list EOL | statement-list EOL // returns void
-
-vector<vector<TokenType>> PrecedenceTable =
-{
-    // what about NOT and unary MINUS?
-    { POWER },
-    { MULTIPLY, DIVIDE, },
-    { PLUS, MINUS, },
-    { LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, GREATER_THAN_EQUAL },
-    { EQUAL, NOT_EQUAL},
-    { AND, OR },
-    // FUNCTIONS
-};
-
-// require OPEN_PAREN, then expressions separated by COMMA, then CLOSE_PAREN
-std::set<TokenType> Functions =
-{
-    ABS,
-    ATN,
-    COS,
-    EXP,
-    INT,
-    LOG,
-    RND,
-    SGN,
-    SIN,
-    SQR,
-    TAN,
-    CHR,
-    LEFT,
-    RIGHT,
-    MID,
-    LEN,
-    STR,
-    TAB,
-    VAL,
-};
-
-Control flow or reserved words
-    IF expression,
-    THEN statements,
-    ELSE statements,
-    FOR identifier EQUAL expression, TO expression, STEP expression
-    NEXT,
-    GOTO expression, GOSUB expression,
-    RETURN
-    END,
-    ON expression GOSUB list,
-    ON expression GOTO list,
-    DEF FN identifier OPEN_PAREN identifier list CLOSE_PAREN expression (using identifiers),
-    DIM identifier OPEN_PAREN INTEGER CLOSE_PAREN,
-    WAIT expression, // hundredths of a second
-    WIDTH expression, // ignore?
-    DATA list of expressions,
-    READ list of identifiers,
-    ORDER expression
-    CLEAR
-    PRINT {SEMICOLON, COMMA, expression} ... [;]
-    INPUT [STRING_LITERAL SEMICOLON] expression list
-
-Unknown
-    identifier EQUAL expression
-
-COLON (statements)
-numbered lines
-*/
-
-
-enum class TokenType
+enum TokenType
 {
     STRING_IDENTIFIER,
     NUMBER_IDENTIFIER,
+    DOUBLE,
     INTEGER,
-    FLOAT,
-    STRING_LITERAL,
+    STRING,
     REMARK,  		 // Remark (comment) starting with REM keyword
-    DIM,
-    LET,
-    IF,
-    THEN,
-    ELSE,
-    FOR,
-    TO,
-    STEP,
-    NEXT,
-    GOTO,
-    GOSUB,
-    RETURN,
-    PRINT,
-    INPUT,
-    END,
     ABS,
     ATN,
     COS,
@@ -259,6 +36,14 @@ enum class TokenType
     SIN,
     SQR,
     TAN,
+    LEFT,
+    RIGHT,
+    MID,
+    LEN,
+    STR,
+    TAB,
+    VAL,
+    CHR,
     NOT_EQUAL,
     LESS_THAN,
     GREATER_THAN,
@@ -271,13 +56,90 @@ enum class TokenType
     MINUS,
     MULTIPLY,
     DIVIDE,
+    AND,
+    OR,
+    NOT,
     POWER,
     COMMA,
     COLON,
     SEMICOLON,
-    AND,
-    OR,
-    NOT,
+    WAIT,
+    DEF,
+    FN,
+    DIM,
+    LET,
+    IF,
+    THEN,
+    ELSE,
+    FOR,
+    TO,
+    STEP,
+    NEXT,
+    GOTO,
+    GOSUB,
+    RETURN,
+    PRINT,
+    INPUT,
+    END,
+    WIDTH,
+    CLEAR,
+    RUN,
+    STOP,
+    ON,
+    READ,
+    ORDER,
+    DATA,
+    TOKENTYPE_END,
+};
+
+
+std::unordered_map<TokenType, int> operator_precedence = {
+    { ABS, -1000 },
+    { ATN, -1000 },
+    { COS, -1000 },
+    { EXP, -1000 },
+    { INT, -1000 },
+    { LOG, -1000 },
+    { RND, -1000 },
+    { SGN, -1000 },
+    { SIN, -1000 },
+    { SQR, -1000 },
+    { TAN, -1000 },
+    { LEFT, -1000 },
+    { RIGHT, -1000 },
+    { MID, -1000 },
+    { LEN, -1000 },
+    { STR, -1000 },
+    { TAB, -1000 },
+    { VAL, -1000 },
+    { CHR, -1000 },
+    { POWER, 6 }, 
+    { MULTIPLY, 5 }, 
+    { DIVIDE, 5 }, 
+    { PLUS, 4 }, 
+    { MINUS, 4 }, 
+    { LESS_THAN, 3 }, 
+    { GREATER_THAN, 3 }, 
+    { LESS_THAN_EQUAL, 3 }, 
+    { GREATER_THAN_EQUAL, 3 }, 
+    { EQUAL, 2 }, 
+    { NOT_EQUAL, 2 }, 
+    { AND, 2 }, 
+    { OR, 2 }, 
+};
+
+std::set<TokenType> function_tokens = {
+    ABS,
+    ATN,
+    COS,
+    EXP,
+    INT,
+    LOG,
+    RND,
+    SGN,
+    SIN,
+    SQR,
+    TAN,
     LEFT,
     RIGHT,
     MID,
@@ -285,10 +147,67 @@ enum class TokenType
     STR,
     TAB,
     VAL,
+    CHR,
+};
+
+std::set<TokenType> operator_tokens = {
+    POWER, 
+    MULTIPLY, 
+    DIVIDE, 
+    PLUS, 
+    MINUS, 
+    LESS_THAN, 
+    GREATER_THAN, 
+    LESS_THAN_EQUAL, 
+    GREATER_THAN_EQUAL, 
+    EQUAL, 
+    NOT_EQUAL, 
+    AND, 
+    OR, 
+    NOT, 
+};
+
+std::set<TokenType> binary_operators = {
+    POWER, 
+    MULTIPLY, 
+    DIVIDE, 
+    PLUS, 
+    MINUS, 
+    LESS_THAN, 
+    GREATER_THAN, 
+    LESS_THAN_EQUAL, 
+    GREATER_THAN_EQUAL, 
+    EQUAL, 
+    NOT_EQUAL, 
+    AND, 
+    OR, 
+};
+
+std::set<TokenType> unary_operators = {
+    PLUS, 
+    MINUS, 
+    NOT,
+};
+
+std::set<TokenType> commands = {
     WAIT,
     DEF,
     FN,
-    CHR,
+    DIM,
+    LET,
+    IF,
+    THEN,
+    ELSE,
+    FOR,
+    TO,
+    STEP,
+    NEXT,
+    GOTO,
+    GOSUB,
+    RETURN,
+    PRINT,
+    INPUT,
+    END,
     WIDTH,
     CLEAR,
     RUN,
@@ -299,188 +218,141 @@ enum class TokenType
     DATA,
 };
 
+
 std::unordered_map<std::string, TokenType> StringToToken =
 {
-    {"<>", TokenType::NOT_EQUAL},
-    {"<=", TokenType::LESS_THAN_EQUAL},
-    {">=", TokenType::GREATER_THAN_EQUAL},
-    {">", TokenType::GREATER_THAN_EQUAL},
-    {"<", TokenType::LESS_THAN},
-    {"(", TokenType::OPEN_PAREN},
-    {")", TokenType::CLOSE_PAREN},
-    {"=", TokenType::EQUAL},
-    {"+", TokenType::PLUS},
-    {"-", TokenType::MINUS},
-    {"*", TokenType::MULTIPLY},
-    {"/", TokenType::DIVIDE},
-    {"^", TokenType::POWER},
-    {",", TokenType::COMMA},
-    {":", TokenType::COLON},
-    {";", TokenType::SEMICOLON},
-    {"DIM", TokenType::DIM},
-    {"LET", TokenType::LET},
-    {"IF", TokenType::IF},
-    {"THEN", TokenType::THEN},
-    {"ELSE", TokenType::ELSE},
-    {"FOR", TokenType::FOR},
-    {"TO", TokenType::TO},
-    {"STEP", TokenType::STEP},
-    {"NEXT", TokenType::NEXT},
-    {"GOTO", TokenType::GOTO},
-    {"GOSUB", TokenType::GOSUB},
-    {"RETURN", TokenType::RETURN},
-    {"PRINT", TokenType::PRINT},
-    {"INPUT", TokenType::INPUT},
-    {"END", TokenType::END},
-    {"ABS", TokenType::ABS},
-    {"ATN", TokenType::ATN},
-    {"COS", TokenType::COS},
-    {"EXP", TokenType::EXP},
-    {"INT", TokenType::INT},
-    {"LOG", TokenType::LOG},
-    {"RND", TokenType::RND},
-    {"SGN", TokenType::SGN},
-    {"SIN", TokenType::SIN},
-    {"SQR", TokenType::SQR},
-    {"TAN", TokenType::TAN},
-    {"AND", TokenType::AND},
-    {"OR", TokenType::OR},
-    {"NOT", TokenType::NOT},
-    {"LEFT$", TokenType::LEFT},
-    {"RIGHT$", TokenType::RIGHT},
-    {"MID$", TokenType::MID},
-    {"STR$", TokenType::STR},
-    {"LEN", TokenType::LEN},
-    {"TAB", TokenType::TAB},
-    {"VAL", TokenType::VAL},
-    {"WAIT", TokenType::WAIT},
-    {"DEF", TokenType::DEF},
-    {"FN", TokenType::FN},
-    {"CHR$", TokenType::CHR},
-    {"WIDTH", TokenType::WIDTH},
-    {"CLEAR", TokenType::CLEAR},
-    {"ON", TokenType::ON},
-    {"READ", TokenType::READ},
-    {"ORDER", TokenType::ORDER},
-    {"DATA", TokenType::DATA},
-    {"RUN", TokenType::RUN},
-    {"STOP", TokenType::STOP},
+    {"<>", NOT_EQUAL},
+    {"<=", LESS_THAN_EQUAL},
+    {">=", GREATER_THAN_EQUAL},
+    {">", GREATER_THAN_EQUAL},
+    {"<", LESS_THAN},
+    {"(", OPEN_PAREN},
+    {")", CLOSE_PAREN},
+    {"=", EQUAL},
+    {"+", PLUS},
+    {"-", MINUS},
+    {"*", MULTIPLY},
+    {"/", DIVIDE},
+    {"^", POWER},
+    {",", COMMA},
+    {":", COLON},
+    {";", SEMICOLON},
+    {"DIM", DIM},
+    {"LET", LET},
+    {"IF", IF},
+    {"THEN", THEN},
+    {"ELSE", ELSE},
+    {"FOR", FOR},
+    {"TO", TO},
+    {"STEP", STEP},
+    {"NEXT", NEXT},
+    {"GOTO", GOTO},
+    {"GOSUB", GOSUB},
+    {"RETURN", RETURN},
+    {"PRINT", PRINT},
+    {"INPUT", INPUT},
+    {"END", END},
+    {"ABS", ABS},
+    {"ATN", ATN},
+    {"COS", COS},
+    {"EXP", EXP},
+    {"INT", INT},
+    {"LOG", LOG},
+    {"RND", RND},
+    {"SGN", SGN},
+    {"SIN", SIN},
+    {"SQR", SQR},
+    {"TAN", TAN},
+    {"AND", AND},
+    {"OR", OR},
+    {"NOT", NOT},
+    {"LEFT$", LEFT},
+    {"RIGHT$", RIGHT},
+    {"MID$", MID},
+    {"STR$", STR},
+    {"LEN", LEN},
+    {"TAB", TAB},
+    {"VAL", VAL},
+    {"WAIT", WAIT},
+    {"DEF", DEF},
+    {"FN", FN},
+    {"CHR$", CHR},
+    {"WIDTH", WIDTH},
+    {"CLEAR", CLEAR},
+    {"ON", ON},
+    {"READ", READ},
+    {"ORDER", ORDER},
+    {"DATA", DATA},
+    {"RUN", RUN},
+    {"STOP", STOP},
 };
 
 std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
 {
-    {TokenType::EQUAL, "="},
-    {TokenType::NOT_EQUAL, "<>"},
-    {TokenType::LESS_THAN_EQUAL, "<="},
-    {TokenType::GREATER_THAN_EQUAL, ">="},
-    {TokenType::LESS_THAN, "<"},
-    {TokenType::GREATER_THAN, ">"},
-    {TokenType::OPEN_PAREN, "("},
-    {TokenType::CLOSE_PAREN, ")"},
-    {TokenType::PLUS, "+"},
-    {TokenType::MINUS, "-"},
-    {TokenType::MULTIPLY, "*"},
-    {TokenType::DIVIDE, "/"},
-    {TokenType::POWER, "^"},
-    {TokenType::COMMA, ","},
-    {TokenType::COLON, ":"},
-    {TokenType::SEMICOLON, ";"},
-    {TokenType::DIM, "DIM"},
-    {TokenType::LET, "LET"},
-    {TokenType::IF, "IF"},
-    {TokenType::THEN, "THEN"},
-    {TokenType::ELSE, "ELSE"},
-    {TokenType::FOR, "FOR"},
-    {TokenType::TO, "TO"},
-    {TokenType::STEP, "STEP"},
-    {TokenType::NEXT, "NEXT"},
-    {TokenType::GOTO, "GOTO"},
-    {TokenType::GOSUB, "GOSUB"},
-    {TokenType::RETURN, "RETURN"},
-    {TokenType::PRINT, "PRINT"},
-    {TokenType::INPUT, "INPUT"},
-    {TokenType::END, "END"},
-    {TokenType::ABS, "ABS"},
-    {TokenType::ATN, "ATN"},
-    {TokenType::COS, "COS"},
-    {TokenType::EXP, "EXP"},
-    {TokenType::INT, "INT"},
-    {TokenType::LOG, "LOG"},
-    {TokenType::RND, "RND"},
-    {TokenType::SGN, "SGN"},
-    {TokenType::SIN, "SIN"},
-    {TokenType::SQR, "SQR"},
-    {TokenType::TAN, "TAN"},
-    {TokenType::AND, "AND"},
-    {TokenType::OR, "OR"},
-    {TokenType::NOT, "NOT"},
-    {TokenType::LEFT, "LEFT$"},
-    {TokenType::RIGHT, "RIGHT$"},
-    {TokenType::MID, "MID$"},
-    {TokenType::STR, "STR$"},
-    {TokenType::LEN, "LEN"},
-    {TokenType::TAB, "TAB"},
-    {TokenType::VAL, "VAL"},
-    {TokenType::WAIT, "WAIT"},
-    {TokenType::DEF, "DEF"},
-    {TokenType::FN, "FN"},
-    {TokenType::CHR, "CHR$"},
-    {TokenType::WIDTH, "WIDTH"},
-    {TokenType::CLEAR, "CLEAR"},
-    {TokenType::ON, "ON"},
-    {TokenType::READ, "READ"},
-    {TokenType::ORDER, "ORDER"},
-    {TokenType::DATA, "DATA"},
-    {TokenType::RUN, "RUN"},
-    {TokenType::STOP, "STOP"},
-};
-
-typedef std::variant<std::string, int32_t, double> Value;
-
-struct Token
-{
-    public:
-        TokenType type;
-        std::optional<Value> value;
-
-        Token(TokenType type) : type(type) {}
-        Token(TokenType type, const std::string& value) : type(type), value(value) {}
-        Token(int32_t value) : type(TokenType::INTEGER), value(value) {}
-        Token(double value) : type(TokenType::FLOAT), value(value) {}
-};
-typedef std::vector<Token> TokenList;
-typedef TokenList::const_iterator TokenIterator;
-
-struct VariableReferenceBoundsError
-{
-    std::string var;
-    int32_t index;
-    int32_t size;
-    VariableReferenceBoundsError(const std::string var, int32_t index, int32_t size) :
-        var(var),
-        index(index),
-        size(size)
-    {}
-};
-
-struct VariableDimensionError
-{
-    std::string var;
-    int used;
-    int expected;
-    VariableDimensionError(const std::string var, int used, int expected) :
-        var(var),
-        used(used),
-        expected(expected)
-    {}
-};
-
-struct VariableNotFoundError
-{
-    std::string var;
-    VariableNotFoundError(const std::string var) :
-        var(var)
-    {}
+    {EQUAL, "="},
+    {NOT_EQUAL, "<>"},
+    {LESS_THAN_EQUAL, "<="},
+    {GREATER_THAN_EQUAL, ">="},
+    {LESS_THAN, "<"},
+    {GREATER_THAN, ">"},
+    {OPEN_PAREN, "("},
+    {CLOSE_PAREN, ")"},
+    {PLUS, "+"},
+    {MINUS, "-"},
+    {MULTIPLY, "*"},
+    {DIVIDE, "/"},
+    {POWER, "^"},
+    {COMMA, ","},
+    {COLON, ":"},
+    {SEMICOLON, ";"},
+    {DIM, "DIM"},
+    {LET, "LET"},
+    {IF, "IF"},
+    {THEN, "THEN"},
+    {ELSE, "ELSE"},
+    {FOR, "FOR"},
+    {TO, "TO"},
+    {STEP, "STEP"},
+    {NEXT, "NEXT"},
+    {GOTO, "GOTO"},
+    {GOSUB, "GOSUB"},
+    {RETURN, "RETURN"},
+    {PRINT, "PRINT"},
+    {INPUT, "INPUT"},
+    {END, "END"},
+    {ABS, "ABS"},
+    {ATN, "ATN"},
+    {COS, "COS"},
+    {EXP, "EXP"},
+    {INT, "INT"},
+    {LOG, "LOG"},
+    {RND, "RND"},
+    {SGN, "SGN"},
+    {SIN, "SIN"},
+    {SQR, "SQR"},
+    {TAN, "TAN"},
+    {AND, "AND"},
+    {OR, "OR"},
+    {NOT, "NOT"},
+    {LEFT, "LEFT$"},
+    {RIGHT, "RIGHT$"},
+    {MID, "MID$"},
+    {STR, "STR$"},
+    {LEN, "LEN"},
+    {TAB, "TAB"},
+    {VAL, "VAL"},
+    {WAIT, "WAIT"},
+    {DEF, "DEF"},
+    {FN, "FN"},
+    {CHR, "CHR$"},
+    {WIDTH, "WIDTH"},
+    {CLEAR, "CLEAR"},
+    {ON, "ON"},
+    {READ, "READ"},
+    {ORDER, "ORDER"},
+    {DATA, "DATA"},
+    {RUN, "RUN"},
+    {STOP, "STOP"},
 };
 
 struct TokenizeError
@@ -502,6 +374,45 @@ std::string str_toupper(std::string s) {
                   );
     return s;
 }
+
+struct VariableReference
+{
+    std::string name;
+    std::vector<int> indices;
+    VariableReference(const std::string& name, const std::vector<int>& indices) :
+        name(name),
+        indices(indices)
+    {}
+};
+
+typedef std::variant<std::string, double, VariableReference> Value;
+double to_basic_bool(bool b) { return b ? -1 : 0; }
+
+struct Token
+{
+    public:
+        TokenType type;
+        Value value{0.0};
+
+        Token(TokenType type) : type(type) {}
+        Token(TokenType type, const std::string& value) : type(type), value(value) {}
+        Token(int32_t value) : type(INTEGER), value(static_cast<double>(value)) {}
+        Token(double value) : type(DOUBLE), value(value) {}
+        operator TokenType() {return type; }
+        operator Value() {return value; }
+};
+
+std::string str(const Value& v) { return std::get<std::string>(v); }
+double num(const Value& v) { return std::get<double>(v); }
+int32_t igr(const Value& v) { return static_cast<int32_t>(std::get<double>(v)); }
+VariableReference vref(const Value& v) { return std::get<VariableReference>(v); }
+bool is_vref(const Value& v) { return std::holds_alternative<VariableReference>(v); }
+bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
+bool is_num(const Value& v) { return std::holds_alternative<double>(v); }
+
+
+typedef std::vector<Token> TokenList;
+typedef TokenList::const_iterator TokenIterator;
 
 TokenList Tokenize(const std::string& line)
 {
@@ -557,9 +468,9 @@ TokenList Tokenize(const std::string& line)
                     throw TokenizeError(TokenizeError::SYNTAX, pending_started + i);
                 }
                 if(pending[pending.size() - 1] == '$') {
-                    tokens.push_back(Token(TokenType::STRING_IDENTIFIER, pending));
+                    tokens.push_back(Token(STRING_IDENTIFIER, str_toupper(pending)));
                 } else {
-                    tokens.push_back(Token(TokenType::NUMBER_IDENTIFIER, pending));
+                    tokens.push_back(Token(NUMBER_IDENTIFIER, str_toupper(pending)));
                 }
                 pending.clear();
                 pending_started = std::string::npos;
@@ -570,7 +481,7 @@ TokenList Tokenize(const std::string& line)
     for (size_t index = 0; index < line.size();) {
         if(str_toupper(line.substr(index, 3)) == "REM") {
             flush_pending();
-            tokens.push_back(Token(TokenType::REMARK, line.substr(index + 3)));
+            tokens.push_back(Token(REMARK, line.substr(index + 3)));
             break;
         }
 
@@ -593,7 +504,7 @@ TokenList Tokenize(const std::string& line)
             if(index < line.size()) {
                 index++;
             }
-            tokens.push_back(Token(TokenType::STRING_LITERAL, str));
+            tokens.push_back(Token(STRING, str));
             continue;
         }
 
@@ -624,35 +535,39 @@ TokenList Tokenize(const std::string& line)
     return tokens;
 }
 
-void print_tokenized(const TokenList& tokens)
+void PrintTokenized(const TokenList& tokens, int emphasize = -1)
 {
     printf("%zd tokens: ", tokens.size());
+    int which = 0;
     for(const auto& t: tokens) {
+        if(which == emphasize) {
+            printf(" ==>");
+        }
         switch(t.type) {
-            case TokenType::STRING_IDENTIFIER:
-            case TokenType::NUMBER_IDENTIFIER:
+            case STRING_IDENTIFIER:
+            case NUMBER_IDENTIFIER:
             {
-                auto v = t.value.value();
+                auto v = t.value;
                 printf("%s ", std::get<std::string>(v).c_str());
                 break;
             }
-            case TokenType::FLOAT: {
-                auto v = t.value.value();
+            case DOUBLE: {
+                auto v = t.value;
                 printf("%f ", std::get<double>(v));
                 break;
             }
-            case TokenType::INTEGER: {
-                auto v = t.value.value();
-                printf("%d ", std::get<int32_t>(v));
+            case INTEGER: {
+                auto v = t.value;
+                printf("%d ", igr(v));
                 break;
             }
-            case TokenType::REMARK: {
-                auto v = t.value.value();
+            case REMARK: {
+                auto v = t.value;
                 printf("REM%s ", std::get<std::string>(v).c_str());
                 break;
             }
-            case TokenType::STRING_LITERAL: {
-                auto v = t.value.value();
+            case STRING: {
+                auto v = t.value;
                 printf("\"%s\" ", std::get<std::string>(v).c_str());
                 break;
             }
@@ -661,786 +576,778 @@ void print_tokenized(const TokenList& tokens)
                 break;
             }
         }
+        if(which++ == emphasize) {
+            printf("<== ");
+        }
     }
     printf("\n");
 }
 
-int32_t to_basic_bool(bool b) { return b ? 0xFFFFFFFF : 0; }
-std::string str(const Value& v) { return std::get<std::string>(v); }
-double dbl(const Value& v) { return std::get<double>(v); }
-int32_t igr(const Value& v) { return std::get<int32_t>(v); }
-bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
-bool is_dbl(const Value& v) { return std::holds_alternative<double>(v); }
-bool is_igr(const Value& v) { return std::holds_alternative<int32_t>(v); }
-bool both_igr(const Value& v1, const Value& v2) { return is_igr(v1) && is_igr(v2); }
-double as_dbl(const Value& v)
+std::tuple<Value, Value> pop2(std::vector<Value>& operands)
 {
-    if(is_dbl(v)) {
-        return dbl(v);
-    } else {
-        return static_cast<double>(igr(v));
-    }
-}
-int32_t as_igr(const Value& v)
-{
-    if(is_igr(v)) {
-        return igr(v);
-    } else {
-        return static_cast<int32_t>(dbl(v));
-    }
+    Value right = operands.back(); operands.pop_back();
+    Value left = operands.back(); operands.pop_back();
+    return {left, right};
 }
 
-struct VariableValue
+template <typename Q>
+auto pop(Q& queue)
 {
-    // A variable can have both a scalar and an array value
-    // e.g. A = 5: A(0) = 6: PRINT A, A(0) yields "5 6"
-
-    Value scalar;
-    std::vector<int32_t> sizes;
-    std::vector<Value> array;
-
-    void SetArraySizes(const std::vector<int32_t>& sizes_, const Value& init)
-    {
-        sizes = sizes_;
-        int32_t size = 1;
-        for(int32_t s: sizes) {
-            size *= (s + 1);
-        }
-        array.resize(size, init);
-    }
-
-    VariableValue(const Value& v) :
-        scalar(v)
-    {
-    }
-
-    VariableValue(const Value& v, const std::vector<int32_t>& sizes, const Value& init) :
-        scalar(v)
-    {
-        SetArraySizes(sizes, init);
-    }
-
-    VariableValue(const std::vector<int32_t>& sizes, const Value& init)
-    {
-        SetArraySizes(sizes, init);
-    }
-};
-
-struct VariableReference
-{
-    std::string name;
-    std::vector<int32_t> indices;
-    VariableReference(const std::string& name) : name(name)
-    {}
-    VariableReference(const std::string& name, const std::vector<int32_t>& indices) : name(name), indices(indices)
-    {}
-};
-
-typedef std::unordered_map<std::string, VariableValue> VariableMap;
-typedef std::optional<Value> Result;
-typedef std::map<int32_t, TokenList> StoredProgram;
-
-struct State {
-    VariableMap variables;
-    StoredProgram program;
-    bool direct_mode{true};
-};
-
-struct TypeMismatchError { };
-struct MissingCloseParenError { };
-
-Value EvaluateVariable(const VariableReference& ref, const VariableMap& variables)
-{
-    auto iter = variables.find(ref.name);
-    if(iter == variables.end()) {
-        throw VariableNotFoundError(ref.name);
-    }
-
-    auto& val = iter->second;
-    if(ref.indices.empty()) {
-        return val.scalar;
-    }
-
-    if(val.sizes.size() != ref.indices.size()) {
-        throw VariableDimensionError(ref.name, ref.indices.size(), val.sizes.size());
-    }
-
-    int32_t index = 0;
-    int32_t stride = 1;
-    for(size_t i = 0; i < val.sizes.size(); i++){
-        if(ref.indices[i] > val.sizes[i]) {
-            throw VariableReferenceBoundsError(ref.name, ref.indices[i], val.sizes[i]);
-        }
-        index = index + ref.indices[i] * stride;
-        stride = stride * val.sizes[i];
-    }
-    return val.array[index];
+    auto back = queue.back();
+    queue.pop_back();
+    return back;
 }
 
-template <class Op>
-Value EvaluateUnary(Value v, Op op)
+void dump_state(const std::vector<std::string>& operators, const std::vector<Value>& operands)
 {
-    if(is_str(v)) {
-        throw TypeMismatchError();
-    }
-    if(is_dbl(v)) {
-        return dbl(v);
-    } else {
-        return igr(v);
-    }
-}
-
-template <class Op>
-Value EvaluateBinary(Value l, Value r, Op op)
-{
-    if(is_str(r)) {
-        throw TypeMismatchError();
-    }
-    if(is_str(l)) {
-        throw TypeMismatchError();
-    }
-    if(is_dbl(l) && is_dbl(r)) {
-        return op(dbl(l), dbl(r));
-    } else if(is_dbl(l)) {
-        return op(dbl(l), igr(r));
-    } else if(is_dbl(r)) {
-        return op(igr(l), dbl(r));
-    } else {
-        return op(igr(l), igr(r));
-    }
-}
-
-// For every Evaluate function operating on a pair of TokenIterators,
-// if evaluation is successful, begin is incremented to the end of
-// the sequence (the beginning of the next sequence).
-
-std::optional<Token> EvaluateIdentifier(TokenIterator& begin, TokenIterator& end)
-{
-    if(begin == end) { return std::nullopt; }
-
-    if(begin->type == TokenType::NUMBER_IDENTIFIER ||
-        begin->type == TokenType::STRING_IDENTIFIER) {
-        return *begin++;
-    }
-    return std::nullopt;
-}
-
-std::optional<Token> EvaluateNumber(TokenIterator& begin, TokenIterator& end)
-{
-    if(begin == end) { return std::nullopt; }
-
-    if(begin->type == TokenType::FLOAT ||
-        begin->type == TokenType::INTEGER) {
-        return *begin++;
-    }
-    return std::nullopt;
-}
-
-std::optional<Token> EvaluateUnaryOperator(TokenIterator& begin, TokenIterator& end)
-{
-    if(begin == end) { return std::nullopt; }
-
-    if(begin->type == TokenType::PLUS ||
-        begin->type == TokenType::NOT ||
-        begin->type == TokenType::MINUS) {
-        return *begin++;
-    }
-    return std::nullopt;
-}
-
-std::optional<std::vector<int32_t>> EvaluateIntegerList(TokenIterator& begin, TokenIterator& end)
-{
-    if(begin == end) { return std::nullopt; }
-
-    std::vector<int32_t> ints;
-    if(begin->type != TokenType::INTEGER) {
-        return std::nullopt;
-    }
-    ints.push_back(std::get<int32_t>(begin->value.value()));
-
-    begin++;
-
-    while((begin + 1 < end) &&
-        (begin->type == TokenType::COMMA && (begin + 1)->type == TokenType::INTEGER))
-    {
-        ints.push_back(std::get<int32_t>((begin + 1)->value.value()));
-        begin += 2;
-    }
-
-    return ints;
-}
-
-std::optional<std::vector<Token>> EvaluateParameterList(TokenIterator& begin, TokenIterator& end)
-{
-    if(begin == end) { return std::nullopt; }
-
-    std::vector<Token> parameters;
-    if(begin->type != TokenType::NUMBER_IDENTIFIER) {
-        return std::nullopt;
-    }
-    parameters.push_back(*begin);
-    begin++;
-
-    while((begin + 1 < end) && 
-        (begin->type == TokenType::COMMA && (begin + 1)->type == TokenType::NUMBER_IDENTIFIER))
-    {
-        parameters.push_back(*(begin + 1));
-        begin += 2;
-    }
-
-    return parameters;
-}
-
-std::optional<Token> EvaluateOneToken(TokenIterator begin, TokenIterator end, const std::set<TokenType>& valid)
-{
-    if(begin == end) { return std::nullopt; }
-
-    if(valid.count(begin->type) > 0) {
-        return *begin++;
-    }
-    return std::nullopt;
-}
-
-std::optional<Value> EvaluateNumericExpression(TokenIterator& begin, TokenIterator& end, State& state);
-
-// variable-reference ::= identifier [OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN] // returns VariableReference
-std::optional<VariableReference> EvaluateVariableReference(TokenIterator& begin_, TokenIterator& end, State& state)
-{
-    auto begin = begin_;
-    auto resultid = EvaluateIdentifier(begin, end);
-    if(!resultid) {
-        return std::nullopt;
-    }
-    auto identifier = *resultid;
-
-    VariableReference ref(std::get<std::string>(identifier.value.value()));
-
-    if((begin == end) || (begin->type != TokenType::OPEN_PAREN)) {
-        begin_ = begin;
-        return ref;
-    }
-    begin++;
-
-    auto& indices = ref.indices;
-    auto result = EvaluateNumericExpression(begin, end, state);
-    if(!result) {
-        return std::nullopt;
-    }
-    auto v = result.value();
-    if(is_igr(v)) {
-        indices.push_back(igr(v));
-    } else {
-        indices.push_back(static_cast<int32_t>(trunc(dbl(v))));
-    }
-
-    while(begin < end && begin->type != TokenType::CLOSE_PAREN)
-    {
-        if(begin->type != TokenType::COMMA) {
-            return std::nullopt;
-        }
-
-        begin++;
-
-        result = EvaluateNumericExpression(begin, end, state);
-        if(!result) {
-            return std::nullopt;
-        }
-
-        v = result.value();
-        if(is_igr(v)) {
-            indices.push_back(igr(v));
+    printf("[");
+    for(auto op: operators) { printf("\"%s\" ", op.c_str()); }
+    printf("] (");
+    for(auto op: operands) {
+        if(is_num(op)) {
+            printf("%f ", num(op));
         } else {
-            indices.push_back(static_cast<int32_t>(trunc(dbl(v))));
+            printf("\"%s\" ", str(op).c_str());
         }
     }
-
-    if(begin == end) {
-        throw MissingCloseParenError();
-    }
-
-    begin++;
-    begin_ = begin;
-    return ref;
+    printf(")");
 }
 
-// paren-numeric-expression ::= OPEN_PAREN numeric-expression CLOSE_PAREN
-std::optional<Value> EvaluateParenNumericExpression(TokenIterator& begin_, TokenIterator& end, State& state)
+void dump_operators(const std::vector<std::string>& operators)
 {
-    auto begin = begin_;
-
-    if(begin == end) { return std::nullopt; }
-
-    if(begin->type != TokenType::OPEN_PAREN) {
-        return std::nullopt;
-    }
-    begin++;
-    auto result = EvaluateNumericExpression(begin, end, state);
-    if(!result) {
-        return std::nullopt;
-    }
-    auto v = result.value();
-
-    if(begin == end) {
-        throw MissingCloseParenError();
-    }
-    if(begin->type != TokenType::CLOSE_PAREN) {
-        return std::nullopt;
-    }
-
-    begin++;
-    begin_ = begin;
-    return v;
+    printf("operators: ");
+    for(auto op: operators) { printf("\"%s\" ", op.c_str()); }
+    printf("\n");
 }
 
-std::optional<Value> EvaluateTerm(TokenIterator& begin_, TokenIterator& end, State& state)
+void dump_operands(const std::vector<Value>& operands)
 {
-    auto begin = begin_;
-    std::vector<TokenType> operators;
-    while(auto unary_op = EvaluateUnaryOperator(begin, end)) {
-        operators.push_back(unary_op->type);
+    printf("operands: ");
+    for(auto op: operands) {
+        if(is_num(op)) {
+            printf("%f ", num(op));
+        } else {
+            printf("\"%s\" ", str(op).c_str());
+        }
     }
+    printf("\n");
+}
 
-    if(begin == end) { return std::nullopt; }
+Value evaluate(TokenType op, std::vector<Value>& operands)
+{
+    Value right = pop(operands);
+    if(op == CLOSE_PAREN) {
+        return right;
+    } else if(op == OPEN_PAREN) {
+        return right;
+    } else if(op == POWER) {
+        Value left = num(pop(operands));
+        return pow(num(left), num(right));
+    } else if(op == MULTIPLY) {
+        Value left = pop(operands);
+        return num(left) * num(right);
+    } else if(op == DIVIDE) {
+        Value left = pop(operands);
+        return num(left) / num(right);
+    } else if(op == PLUS) {
+        Value left = pop(operands);
+        return num(left) + num(right);
+    } else if(op == MINUS) {
+        Value left = pop(operands);
+        return num(left) - num(right);
+    } else if(op == TAB) {
+	// XXX this is wrong, should add spaces from current location
+	// to the specified next tab stop
+        return std::string(static_cast<int>(num(right)), ' ');
+    } else if(op == SIN) {
+        return sin(num(right));
+    } else if(op == COS) {
+        return cos(num(right));
+    } else if(op == TAN) {
+        return tan(num(right));
+    } else if(op == SGN) {
+        return num(right) < 0.0 ? -1.0 : (num(right) > 0.0 ? 1.0 : 0.0);
+    } else if(op == INT) {
+        return trunc(num(right));
+    } else if(op == RND) {
+        return drand48();
+    } else if(op == EXP) {
+        return exp(num(right));
+    } else if(op == LOG) {
+        return log(num(right));
+    } else {
+        printf("internal error\n");
+        abort();
+    }
+}
 
-    if(begin->type == TokenType::INTEGER) {
-        int32_t v = std::get<int32_t>(begin->value.value());
-        for(auto it = operators.rbegin(); it != operators.rend(); it++) {
-            switch(*it) {
-                case TokenType::PLUS: break;
-                case TokenType::MINUS: v = -v; break;
-                case TokenType::NOT: v = -1 - v; break;
-                default: break;
+std::optional<TokenType> is_operator(TokenIterator op, TokenIterator end)
+{
+    if((op < end) && (operator_tokens.count(op->type) > 0)) {
+        return op->type;
+    }
+    return std::nullopt;
+}
+
+bool is_binary_operator(TokenType op)
+{
+    return binary_operators.count(op) > 0;
+}
+
+bool is_unary_operator(TokenType op)
+{
+    return unary_operators.count(op) > 0;
+}
+
+bool is_function(TokenType&word)
+{
+    return function_tokens.count(word) > 0;
+}
+
+bool is_command(TokenType&command)
+{
+    return commands.count(command) > 0;
+}
+
+bool is_higher_precedence(TokenType op1, TokenType op2)
+{
+    bool both_binary = is_binary_operator(op1) && is_binary_operator(op2);
+    bool is_higher = both_binary && (operator_precedence.at(op1) > operator_precedence.at(op2));
+    return is_higher;
+}
+
+struct State
+{
+    std::unordered_map<std::string, Value> variables;
+    std::map<int, TokenList> program;
+    int current_line{-1};
+    int goto_line{-1};
+    bool direct{true};
+};
+
+struct ParseError
+{
+    enum {
+        UNEXPECTED_END,
+        UNEXPECTED,
+        EXPECTED,
+    } type;
+    TokenType expected_token_type{TOKENTYPE_END};
+    TokenList tokens;
+    int token{-1};
+    ParseError(TokenList tokens, TokenType expected_token, int token) :
+        type(EXPECTED),
+        expected_token_type(expected_token),
+        tokens(tokens),
+        token(token)
+    {}
+    ParseError(TokenList tokens, int token) :
+        type(UNEXPECTED),
+        tokens(tokens),
+        token(token)
+    {}
+    ParseError(TokenList tokens) :
+        type(UNEXPECTED_END),
+        tokens(tokens)
+    {}
+};
+
+std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
+{
+    if((cur < end) && (expect.count(cur->type) > 0)) {
+        return *cur++;
+    }
+    return {};
+}
+
+std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
+{
+    if(cur >= tokens.end()) { return {}; }
+    if(expect.count(cur->type) > 0) {
+        return (cur++)->type;
+    }
+    return {};
+}
+
+bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
+{
+    return expect.count(type) > 0;
+}
+
+/* 
+variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+term ::= {unary-op} (INTEGER | FLOAT | STRING | variable-reference | function | paren-expression) // evaluates using unary-ops, returns Value
+paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
+numeric-expression ::= expression that is a number // returns double
+integer-expression ::= numeric-expression that is an int // returns int
+string-expression ::= expression resulting in STRING // returns std::string?
+numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
+len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
+val-function ::= VAL OPEN_PAREN string-expression CLOSE_PAREN
+val-function ::= LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+val-function ::= RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+val-function ::= MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
+user-function ::= FN NUMBER_IDENTIFIER OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN
+function ::= numeric-function |
+             len-function |
+             val-function |
+             left-function |
+             right-function |
+             mid-function |
+             user-function
+             // evaluates, returns Value
+operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
+expression ::= paren-expression | STRING | operation | function // evaluates, returns Value
+expression-list ::= expression {COMMA expression} // returns std::vector<Value>
+variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
+print-statement ::= PRINT {COMMA | SEMICOLON | expression} // returns void
+let-statement ::= [LET] variable-reference EQUAL expression // returns void
+input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list // returns void
+dim-statement ::= DIM identifier OPEN_PAREN integer-list CLOSE_PAREN // returns void
+if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | statement)] // returns void
+for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers? // returns void
+next-statement ::= NEXT [NUMBER_IDENTIFIER] // returns void
+on-statement ::= ON integer-expression (GOTO | GOSUB) integer-list // returns void
+gosub-statement ::= GOSUB integer // returns void
+wait-statement ::= WAIT numeric-expression // returns void
+width-statement ::= WIDTH numeric-expression // returns void
+order-statement ::= ORDER INTEGER // returns void
+read-statement ::= READ variable-reference-list // returns void
+data-statement ::= DATA expression-list // returns void
+deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression // returns void
+statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
+no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
+return-statement ::= RETURN // returns void
+*/
+
+// std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
+// std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
+// bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
+
+// identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns optional std::string
+std::optional<Value> ParseIdentifier(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {NUMBER_IDENTIFIER, STRING_IDENTIFIER})) {
+        return cur_++->value;
+    }
+    return {};
+}
+
+// number ::= DOUBLE | INTEGER // returns optional Value
+std::optional<Value> ParseNumber(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {DOUBLE, INTEGER})) {
+        return cur_++->value;
+    }
+    return {};
+}
+
+// unary-op ::= (PLUS | MINUS | NOT) // returns TokenType
+std::optional<TokenType> ParseUnaryOp(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {PLUS, MINUS, NOT})) {
+        return cur_++->type;
+    }
+    return {};
+}
+
+// integer-list ::= INTEGER {COMMA INTEGER} // returns std::vector<int>
+std::optional<std::vector<int>> ParseIntegerList(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    std::vector<int> integers;
+    if(cur_ >= end) { return {}; }
+    if(cur_->type != INTEGER) {
+        return {};
+    }
+    auto cur = cur_;
+    integers.push_back(igr(cur++->value));
+    while((cur < end) && (cur->type == COMMA)) {
+        cur++;
+        if(cur->type != INTEGER) {
+            return {};
+        }
+        integers.push_back(igr(cur++->value));
+    }
+    cur_ = cur;
+    return integers;
+}
+
+// number-identifier-list ::= NUMBER_IDENTIFIER {COMMA NUMBER_IDENTIFIER} // returns std::vector<Token>
+std::optional<std::vector<Value>> ParseNumberIdentifierList(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    std::vector<Value> identifiers;
+    if(cur_ >= end) { return {}; }
+    if(cur_->type != NUMBER_IDENTIFIER) {
+        return {};
+    }
+    auto cur = cur_;
+    identifiers.push_back(cur++->value);
+    while((cur < end) && (cur->type == COMMA)) {
+        cur++;
+        if(cur->type != NUMBER_IDENTIFIER) {
+            return {};
+        }
+        identifiers.push_back(cur++->value);
+    }
+    cur_ = cur;
+    return identifiers;
+}
+
+// numeric-function-name ::= ABS | ATN | COS | EXP | INT | LOG | RND | SGN | SIN | SQR | TAN | TAB | CHR | STR // returns TokenType
+std::optional<TokenType> ParseNumericFunctionName(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {ABS, ATN, COS, EXP, INT, LOG, RND, SGN, SIN, SQR, TAN, TAB, CHR, STR})) {
+        return cur_++->type;
+    }
+    return {};
+}
+
+// integer ::= INTEGER // returns optional int32_t
+std::optional<Value> ParseInteger(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(cur_->type == INTEGER) {
+        return cur_++->value;
+    }
+    return {};
+}
+
+// end-statement ::= END // returns void
+bool ParseEndStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == END) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
+// clear-statement ::= CLEAR // returns void
+bool ParseClearStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == CLEAR) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
+// run-statement ::= RUN // returns void
+bool ParseRunStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == RUN) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
+// stop-statement ::= STOP // returns void
+bool ParseStopStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == STOP) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
+// goto-statement ::= GOTO integer // returns void
+std::optional<int32_t> ParseGoto(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == GOTO) {
+        // Committed from here, must emit parse error if can't match
+        auto cur = cur_ + 1;
+        if(cur >= end) {
+            throw ParseError(tokens);
+        }
+        if(cur->type != INTEGER) {
+            throw ParseError(tokens, INTEGER, cur - tokens.begin());
+        }
+        state.goto_line = igr(cur->value);
+        cur_ = cur;
+        return true;
+    }
+    return false;
+}
+
+// statement-list ::= statement {COLON statement} // returns void
+
+#if 0
+bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+    VariableReference reference;
+
+    ParseOptional(tokens, cur, end, {LET});
+
+    if(auto results = ParseAny(tokens, cur, end, state, {STRING_IDENTIFIER, NUMBER_IDENTIFIER}) {
+        variable = str(results->value);
+        if(!ParseOnly(tokens, cur, end, state, EQUAL) {
+            throw ParseError(tokens, EQUAL, cur - tokens.begin()); }
+        }
+        auto value = ParseExpression(tokens, cur, end, state);
+        if(!value) {
+            throw ParseError(tokens, cur - tokens.begin()); }
+        }
+        // XXX string variables
+        state.variables[str_toupper(str(*results))] = *value;
+        return true;
+    }
+    return false;
+}
+#endif
+
+std::string to_str(const Value& v)
+{
+    if(is_vref(v)) {
+        auto ref = vref(v);
+        std::string s = ref.name;
+        if(ref.indices.size() > 0) {
+            s = s + "(" + std::to_string(ref.indices[0]);
+            for(auto it = ref.indices.begin() + 1; it < ref.indices.end(); it++) {
+                s = s + ", " + std::to_string(*it);
             }
+            s = s + ")";
         }
-        begin_ = begin + 1;
-        return v;
-    }
-
-    if(begin->type == TokenType::FLOAT) {
-        double v = std::get<double>(begin->value.value());
-        for(auto it = operators.rbegin(); it != operators.rend(); it++) {
-            switch(*it) {
-                case TokenType::PLUS: break;
-                case TokenType::MINUS: v = -v; break;
-                case TokenType::NOT: v = -1 - static_cast<int>(trunc(v)); break;
-                default: break;
-            }
-        }
-        begin_ = begin + 1;
-        return v;
-    }
-
-    Value v;
-    auto result = EvaluateVariableReference(begin, end, state);
-
-    if(result) {
-
-        auto ref = result.value();
-        v = EvaluateVariable(ref, state.variables);
-
-    } else { 
-
-        auto result = EvaluateParenNumericExpression(begin, end, state);
-        if(!result) {
-            return std::nullopt;
-        }
-        v = result.value();
-    }
-
-    if(!is_igr(v) && !is_dbl(v)) {
-        throw TypeMismatchError();
-    }
-    for(auto it = operators.rbegin(); it != operators.rend(); it++) {
-        switch(*it) {
-            case TokenType::PLUS:
-                break;
-            case TokenType::MINUS:
-                if(is_igr(v)) {
-                    v = - igr(v);
-                } else {
-                    v = - dbl(v);
-                }
-                break;
-            case TokenType::NOT:
-                if(is_igr(v)) {
-                    v = -1 - igr(v);
-                } else {
-                    v = -1 - static_cast<int32_t>(trunc(dbl(v)));
-                }
-                break;
-            default: break;
-        }
-    }
-    begin_ = begin;
-    return v;
-}
-
-// exp-op ::= term POWER numeric-expression // evaluates, returns Value 
-// product-op ::= term (MULTIPLY | DIVIDE ) numeric-expression // evaluates, returns Value
-// sum-op ::= term (PLUS | MINUS) numeric-expression // evaluates, returns Value
-// relational-op ::= term (LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL) numeric-expression // evaluates, returns Value
-// compare-op ::= term (EQUAL | NOT_EQUAL) numeric-expression // evaluates, returns Value
-// logic-op ::= term (AND | OR) numeric-expression // evaluates, returns Value
-// numeric-expression ::= exp-op | product-op | sum-op | relational-op | compare-op | logic-op | term // evaluates, returns Value
-
-Value EvaluateBinaryOperation(Value left, TokenType op, Value right)
-{
-    switch (op) {
-        case TokenType::POWER:
-            return pow(as_dbl(left), as_dbl(right));
-            break;
-        case TokenType::MULTIPLY:
-            return both_igr(left, right) ? (as_igr(left) * as_igr(right)) : (as_dbl(left) * as_dbl(right));
-            break;
-        case TokenType::DIVIDE:
-            return both_igr(left, right) ? (as_igr(left) / as_igr(right)) : (as_dbl(left) / as_dbl(right));
-            break;
-        case TokenType::PLUS:
-            return both_igr(left, right) ? (as_igr(left) + as_igr(right)) : (as_dbl(left) + as_dbl(right));
-            break;
-        case TokenType::MINUS:
-            return both_igr(left, right) ? (as_igr(left) - as_igr(right)) : (as_dbl(left) - as_dbl(right));
-            break;
-        case TokenType::LESS_THAN:
-            return to_basic_bool(both_igr(left, right) ? (as_igr(left) < as_igr(right)) : (as_dbl(left) < as_dbl(right)));
-            break;
-        case TokenType::GREATER_THAN:
-            return to_basic_bool(both_igr(left, right) ? (as_igr(left) > as_igr(right)) : (as_dbl(left) > as_dbl(right)));
-            break;
-        case TokenType::LESS_THAN_EQUAL:
-            return to_basic_bool(both_igr(left, right) ? (as_igr(left) <= as_igr(right)) : (as_dbl(left) <= as_dbl(right)));
-            break;
-        case TokenType::GREATER_THAN_EQUAL:
-            return to_basic_bool(both_igr(left, right) ? (as_igr(left) >= as_igr(right)) : (as_dbl(left) >= as_dbl(right)));
-            break;
-        case TokenType::EQUAL:
-            return to_basic_bool(both_igr(left, right) ? (as_igr(left) == as_igr(right)) : (as_dbl(left) == as_dbl(right)));
-            break;
-        case TokenType::NOT_EQUAL:
-            return to_basic_bool(both_igr(left, right) ? (as_igr(left) != as_igr(right)) : (as_dbl(left) != as_dbl(right)));
-            break;
-        case TokenType::AND:
-            return as_igr(left) & as_igr(right);
-            break;
-        case TokenType::OR:
-            return as_igr(left) | as_igr(right);
-            break;
-        default:
-            // won't reach
-            return 0;
-            break;
+        return s;
+    } else if(is_num(v)) {
+        return std::to_string(num(v));
+    } else {
+        return str(v);
     }
 }
-
-std::optional<Value> EvaluateNumericExpression(TokenIterator& begin_, TokenIterator& end, State& state)
-{
-    const std::vector<TokenType> binary_ops_not {
-        TokenType::OR,
-        TokenType::AND,
-        TokenType::NOT_EQUAL,
-        TokenType::EQUAL,
-        TokenType::GREATER_THAN_EQUAL,
-        TokenType::LESS_THAN_EQUAL,
-        TokenType::GREATER_THAN,
-        TokenType::LESS_THAN,
-        TokenType::MINUS,
-        TokenType::PLUS,
-        TokenType::DIVIDE,
-        TokenType::MULTIPLY,
-        TokenType::POWER};
-    const std::vector<TokenType> binary_ops {TokenType::POWER, TokenType::MULTIPLY, TokenType::DIVIDE, TokenType::PLUS, TokenType::MINUS, TokenType::LESS_THAN, TokenType::GREATER_THAN, TokenType::LESS_THAN_EQUAL, TokenType::GREATER_THAN_EQUAL, TokenType::EQUAL, TokenType::NOT_EQUAL, TokenType::AND, TokenType::OR};
-
-    auto begin = begin_;
-    auto result = EvaluateTerm(begin, end, state);
-    if(!result) {
-        return std::nullopt;
-    }
-
-    for(const auto& op: binary_ops) {
-        auto begin2 = begin;
-
-        if(begin2->type == op) {
-            begin2++;
-            auto right = EvaluateNumericExpression(begin2, end, state);
-            if(right) {
-                begin_ = begin2;
-                return EvaluateBinaryOperation(result.value(), op, right.value());
-            }
-        }
-    }
-
-    begin_ = begin;
-    return result;
-}
-
-// numeric-expression ::= term | logic-op | compare-op | relational-op | sum-op | product-op | exp-op // evaluates, returns Value
 
 void EvaluateTokens(const TokenList& tokens, State& state)
 {
-    if(tokens.size() == 0) {
-        // Should evaluate to nothing.
+    TokenIterator cur = tokens.begin();
+    std::vector<Value> operands;
+    std::vector<std::string> operators;
+    std::vector<std::string> unary_operators;
+
+    bool next_operator_is_unary = true;
+
+    if(cur >= tokens.end()) { throw ParseError(tokens); }
+    /* XXX need to re-enable for line numbers */ if(false && cur->type == INTEGER) {
+        int line_number = static_cast<int>(num(tokens.at(0).value));
+        auto line = state.program[line_number];
+        std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
         return;
     }
-    if(false && tokens[0].type == TokenType::INTEGER) {
-        // Line number - a program line
-        auto line_number = std::get<int32_t>(tokens[0].value.value());
-        auto line = TokenList(tokens.cbegin() + 1, tokens.cend());
-        state.program[line_number] = line;
-        return;
-    }
-    if(tokens[0].type == TokenType::REMARK) {
-        return;
-    }
+
+    /* XXX */ PrintTokenized(tokens);
 
     {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateIdentifier(begin, end);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto token = result.value();
-            printf("identifier %s\n", std::get<std::string>(token.value.value()).c_str());
-        } else {
-            printf("failed identifier\n");
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto identifier = ParseIdentifier(tokens, cur, end)) {
+            printf("identifier \"%s\"\n", str(*identifier).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
     {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateNumber(begin, end);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto token = result.value();
-            auto v = token.value.value();
-            if(is_igr(v)) {
-                printf("integer %d\n", igr(v));
-            } else {
-                printf("float %f\n", dbl(v));
-            }
-        } else {
-            printf("failed number\n");
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto number = ParseNumber(tokens, cur, end)) {
+            printf("number %f\n", num(*number));
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
     {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateUnaryOperator(begin, end);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto token = result.value();
-            if(token.type == TokenType::MINUS) {
-                printf("MINUS\n");
-            } else if(token.type == TokenType::PLUS) {
-                printf("PLUS\n");
-            } else {
-                printf("NOT\n");
-            }
-        } else {
-            printf("failed unary operator\n");
-        }
-    }
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
 
-    {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateIntegerList(begin, end);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto ints = result.value();
-            for(auto i: ints) {
-                printf("%d ", i);
+        if(auto integers = ParseIntegerList(tokens, cur, end)) {
+            printf("integer list (%zd) ", integers->size());
+            for(auto i: *integers) {
+                printf("%d, ", i);
             }
             printf("\n");
-        } else {
-            printf("failed integer list\n");
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
     {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateParameterList(begin, end);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto tokens = result.value();
-            for(const auto& t: tokens) {
-                printf("%s ", std::get<std::string>(t.value.value()).c_str());
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto integer = ParseInteger(tokens, cur, end)) {
+            printf("integer %d\n", igr(*integer));
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto identifiers = ParseNumberIdentifierList(tokens, cur, end)) {
+            printf("identifier list (%zd) ", identifiers->size());
+            for(auto v: *identifiers) {
+                printf("%s, ", str(v).c_str());
             }
             printf("\n");
-        } else {
-            printf("failed parameter list\n");
-        }
-    }
-
-    std::set<TokenType> numeric_function_names { TokenType::ABS, TokenType::ATN, TokenType::COS, TokenType::EXP, TokenType::INT, TokenType::LOG, TokenType::RND, TokenType::SGN, TokenType::SIN, TokenType::SQR, TokenType::TAN, TokenType::TAB, TokenType::CHR, TokenType::STR };
-    {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateOneToken(begin, end, numeric_function_names);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto token = result.value();
-            printf("numeric function %s\n", TokenTypeToStringMap[token.type]);
-        } else {
-            printf("failed numeric function\n");
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
     {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateVariableReference(begin, end, state);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto ref = result.value();
-            printf("variable reference %s ", ref.name.c_str());
-            for(auto i: ref.indices) {
-                printf("%d ", i);
-            }
-            printf("\n");
-        } else {
-            printf("failed variable reference\n");
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto ttype = ParseUnaryOp(tokens, cur, end)) {
+            printf("unary op %d %s\n", *ttype, TokenTypeToStringMap[*ttype]);
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
 
     {
-        auto begin = tokens.cbegin();
-        auto end = tokens.cend();
-        auto result = EvaluateNumericExpression(begin, end, state);
-        printf("%zd consumed : ", begin - tokens.cbegin());
-        if(result) {
-            auto v = result.value();
-            if(is_igr(v)) {
-                printf("expression integer %d\n", igr(v));
-            } else {
-                printf("expression float %f\n", dbl(v));
-            }
-        } else {
-            printf("failed numeric expression\n");
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto ttype = ParseNumericFunctionName(tokens, cur, end)) {
+            printf("numeric function name %d %s\n", *ttype, TokenTypeToStringMap[*ttype]);
+            printf("    %zd tokens remaining \n", end - cur);
         }
     }
-}
+
+    TokenIterator end = tokens.end();
+    if(ParseEndStatement(tokens, cur, end, state)) {
+        printf("end\n");
+    } else if(ParseClearStatement(tokens, cur, end, state)) {
+        printf("clear\n");
+    } else if(ParseRunStatement(tokens, cur, end, state)) {
+        printf("run\n");
+    } else if(ParseStopStatement(tokens, cur, end, state)) {
+        printf("stop\n");
+    } else if(ParseGoto(tokens, cur, end, state)) {
+        printf("goto %d\n", state.goto_line);
+    }
+    printf("    %zd tokens remaining \n", end - cur);
 
 #if 0
+    while(line[cur]) {
+        double number = -666;
 
-struct InvalidLValueError { };
+        skip_whitespace();
 
-template <class Op>
-struct ASTString1Param : public ASTNode
-{
-    ASTNodePtr node;
-    Op op;
-    ASTString1Param(ASTNodePtr node, Op op) :
-        node(std::move(node)),
-        op(op)
-    {}
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
-    {
-        Value v = node->evaluateR(variables, program).value();
-        if(!std::holds_alternative<std::string>(v)) {
-            throw TypeMismatchError();
-        }
-        return op(std::get<std::string>(v));
-    }
-    virtual ~ASTString1Param() {}
-};
-
-template <class Op>
-struct ASTString2Param : public ASTNode
-{
-    ASTNodePtr param1;
-    ASTNodePtr param2;
-    Op op;
-    ASTString2Param(ASTNodePtr param1, ASTNodePtr param2, Op op) :
-        param1(std::move(param1)),
-        param2(std::move(param2)),
-        op(op)
-    {}
-    virtual ASTValue evaluateR(VariableMap& variables, StoredProgram& program) override
-    {
-        Value value1 = param1->evaluateR(variables, program).value();
-        Value value2 = param2->evaluateR(variables, program).value();
-        if(!std::holds_alternative<std::string>(value1)) {
-            printf("value 1 not string\n");
-            throw TypeMismatchError();
-        }
-        if(!std::holds_alternative<std::int32_t>(value2)) {
-            printf("value 2 not int32_t\n");
-            throw TypeMismatchError();
-        }
-        return op(std::get<std::string>(value1), std::get<std::int32_t>(value2));
-    }
-    virtual ~ASTString2Param() {}
-};
-
-#endif
-
-std::string to_string(const Result& r)
-{
-    if(r.has_value()) {
-        auto v = r.value();
-        if(is_igr(v)) {
-            return std::to_string(igr(v));
-        } else if(is_dbl(v)) {
-            return std::to_string(dbl(v));
-        } else if(is_igr(v)) {
-            return str(v).c_str();
+        if(line[cur] == ';') {
+            used = 1;
+        } else if(line[cur] == ',') {
+            used = 1;
+        } else if(line[cur] == '(') {
+            operators.push_back("(");
+            next_operator_is_unary = true;
+            used = 1;
+        } else if(line[cur] == ')') {
+            bool did_an_unwind = false;
+            while(!operators.empty() && operators.back() != "(") {
+                if(debug_state) { printf("unwinding to \"(\" :"); dump_state(operators, operands); puts("");}
+                did_an_unwind = true;
+                std::string op2 = pop(operators);
+                // printf("finishing lower-precedence operator %s before \")\"\n", op2.c_str());
+                operands.push_back(evaluate(op2, operands));
+            }
+            if(operators.empty()) {
+                printf("unexpected end parenthesis\n");
+                abort();
+            }
+            if(did_an_unwind) {
+                if(debug_state) { printf("after unwinding to \"(\" :"); dump_state(operators, operands); puts(""); }
+            }
+            operators.pop_back();
+            if(!operators.empty() && is_function(operators.back())) {
+                std::string func = pop(operators);
+                // printf("finishing function operator %s before \")\"\n", func.c_str());
+                operands.push_back(evaluate(func, operands));
+                // printf("after function %s before \")\"\n", func.c_str());
+            }
+            next_operator_is_unary = false;
+            used = 1;
+        } else if(auto result = is_operator(line + cur, &used)) {
+            auto op = *result;
+            if(next_operator_is_unary) {
+                if(is_unary_operator(op)) {
+                    unary_operators.push_back(op);
+                } else {
+                    printf("unexpected operator in unary context: \"%s\"\n", op.c_str());
+                    abort();
+                }
+                if(debug_state) { printf("unary operator :"); dump_state(operators, operands); puts(""); }
+            } else {
+                bool did_an_unwind = false;
+                while(!operators.empty() && is_higher_precedence(operators.back(), op)) {
+                    did_an_unwind = true;
+                    if(debug_state) { printf("unwinding higher precedence :"); dump_state(operators, operands); puts(""); }
+                    std::string higher = pop(operators);
+                    // printf("%s is higher precedence than %s\n", higher.c_str(), op.c_str());
+                    operands.push_back(evaluate(higher, operands));
+                }
+                if(did_an_unwind) {
+                    if(debug_state) { printf("after unwinding higher precedence :"); dump_state(operators, operands); puts(""); }
+                }
+                operators.push_back(op);
+                next_operator_is_unary = is_binary_operator(op);
+            }
+        } else if(sscanf(line + cur, "\"%[^\"]\"%n", word, &used) == 1) {
+            operands.push_back(word);
+            if(debug_state) { printf("operand :"); dump_state(operators, operands); puts(""); }
+            next_operator_is_unary = false;
+        } else if(sscanf(line + cur, "%lf%n", &number, &used) == 1) {
+            while(!unary_operators.empty()) {
+                std::string op = pop(unary_operators);
+                if(op == "-") {
+                    number = -number;
+                } else if(op == "NOT") {
+                    number = -1 - number;
+                } else if(op == "+") {
+                    // number = number;
+                } else {
+                    printf("internal error, unary operator \"%s\"\n", op.c_str());
+                }
+            }
+            operands.push_back(number);
+            if(debug_state) { printf("operand :"); dump_state(operators, operands); puts(""); }
+            next_operator_is_unary = false;
+        } else if(sscanf(line + cur, "%[A-Za-z]%n", word, &used) == 1) {
+            std::string identifier{str_toupper(word)};
+            if(operator_precedence.count(identifier) > 0) {
+                operators.push_back(identifier);
+                if(debug_state) { printf("operator :"); dump_state(operators, operands); puts(""); }
+                next_operator_is_unary = true;
+            } else if(state.variables.count(identifier) > 0) {
+                operands.push_back(state.variables[identifier]);
+                if(debug_state) { printf("variable :"); dump_state(operators, operands); puts(""); }
+                next_operator_is_unary = false;
+            } else {
+                printf("unknown word \"%s\"\n", identifier.c_str());
+                abort();
+            }
         } else {
+            printf("syntax error at \"%s\"\n", line + cur);
             abort();
         }
-    } else {
-        return "NoValue";
+        assert(used != 0);
+        cur += used;
     }
+    while(!operators.empty()) {
+        std::string op = pop(operators);
+        if(debug_state) { printf("unwinding final operators :"); dump_state(operators, operands); puts(""); }
+        // printf("finishing lower-precedence operator %s\n", op.c_str());
+        operands.push_back(evaluate(op, operands));
+    }
+    if(debug_state) { printf("final state :"); dump_state(operators, operands); puts(""); }
+#if 0
+    if(operands.size() > 0) {
+        printf("%s\n", to_str(operands.back()).c_str());
+    }
+    if(operands.size() > 1) {
+        printf("extra ");
+        dump_operands(operands);
+    }
+#endif
+
+    if(command == "PRINT") {
+        for(auto v: operands) {
+            if(is_num(v)) {
+                printf("%f ", num(v));
+            } else {
+                printf("%s ", str(v).c_str());
+            }
+        }
+        printf("\n");
+    } else if(command == "LET") {
+        auto ref = vref(operands.at(0));
+        auto value = operands.at(1);
+        state.variables[ref.name] = value;
+    } else if(command == "END") {
+        state.direct = true;
+    } else if(command == "RUN") {
+        if(!state.direct) {
+            printf("need to be in direct mode for RUN\n");
+            abort();
+        }
+        state.current_line = state.program.begin()->first;
+        state.direct = false;
+        while(!state.direct) {
+            state.goto_line = -1;
+            evaluate_line(state.program.at(state.current_line).c_str(), state);
+            if(state.direct) {
+                break;
+            }
+            if(state.goto_line == -1) {
+                auto next_line = state.program.find(state.current_line);
+                next_line++;
+                if(next_line == state.program.end()) {
+                    state.direct = true;
+                    break;
+                }
+                // printf("next line from %d yielded %d\n", state.current_line, next_line->first);
+                state.current_line = next_line->first;
+            } else {
+                auto next_line = state.program.find(state.goto_line);
+                if(next_line == state.program.end()) {
+                    printf("unknown line number %d\n", state.current_line);
+                    abort();
+                }
+                // printf("goto %d yielded %d\n", state.goto_line, next_line->first);
+                state.current_line = next_line->first;
+            }
+        }
+    } else if(command == "GOTO") {
+        if(state.direct) {
+            printf("need to be in run mode for GOTO\n");
+            abort();
+        }
+        state.goto_line = static_cast<int>(trunc(num(operands[0])));
+    } else {
+        printf("unimplemented command \"%s\"\n", command.c_str());
+    }
+#endif
 }
 
 int main(int argc, char **argv)
 {
-    char line[1024];
-    std::set<std::string> identifiers;
-
+    static char line[512];
     State state;
-    VariableValue val{123.0, {10}, 0.0};
-    state.variables.insert({"A", val});
-    VariableValue val2{"Hello", {10}, ""};
-    state.variables.insert({"B$", val2});
+    while(fgets(line, sizeof(line), stdin) != nullptr) {
+        line[strlen(line) - 1] = '\0';
 
-    if(true) {
-        std::set<std::string> identifiers;
-        while(fgets(line, sizeof(line), stdin) != NULL) {
-            line[strlen(line) - 1] = '\0';
-            try {
-                auto tokens = Tokenize(line);
-                print_tokenized(tokens);
-                for(const auto& token: tokens) {
-                    if(token.type == TokenType::STRING_IDENTIFIER || token.type == TokenType::NUMBER_IDENTIFIER) {
-                        auto value = token.value.value();
-                        identifiers.insert(std::get<std::string>(value).c_str());
-                    }
-                }
-                EvaluateTokens(tokens, state);
-            } catch (const TokenizeError& e) {
-                switch(e.type) {
-                    case TokenizeError::SYNTAX:
-                        printf("syntax error at %d (\"%*s\")\n", e.position, std::min(5, (int)(strlen(line) - e.position)), line + e.position);
-                }
-            } catch (const TypeMismatchError& e) {
-                printf("expected a number, encountered a string\n");
-            } catch (const VariableNotFoundError& e) {
-                printf("unknown variable \"%s\"\n", e.var.c_str());
-            } catch (const VariableDimensionError& e) {
-                printf("array access for variable \"%s\" used %d dimensions, expected %d\n", e.var.c_str(), e.used, e.expected);
-            } catch (const VariableReferenceBoundsError& e) {
-                printf("variable \"%s\" referenced %d out of array bounds %d\n", e.var.c_str(),
-                    e.index, e.size);
+        try {
+            TokenList tokens = Tokenize(line);
+            EvaluateTokens(tokens, state);
+        } catch (const TokenizeError& e) {
+            switch(e.type) {
+                case TokenizeError::SYNTAX:
+                    printf("syntax error at %d (\"%*s\")\n", e.position, std::min(5, (int)(strlen(line) - e.position)), line + e.position);
+                    break;
             }
-        }
-        if(false) {
-            printf("identifiers:\n");
-            for(const auto &id: identifiers) {
-                printf("%s\n", id.c_str());
+        } catch (const ParseError& e) {
+            switch(e.type) {
+                case ParseError::UNEXPECTED_END:
+                    printf("unexpected end of tokens while parsing\n");
+                    break;
+                case ParseError::UNEXPECTED:
+                    printf("unexpected token while parsing\n");
+                    break;
+                case ParseError::EXPECTED:
+                    printf("expected %s token while parsing\n", TokenTypeToStringMap[e.expected_token_type]);
+                    break;
             }
+            PrintTokenized(e.tokens, e.token);
         }
     }
 }
