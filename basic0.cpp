@@ -757,16 +757,16 @@ std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, 
     if((cur < end) && (expect.count(cur->type) > 0)) {
         return *cur++;
     }
-    return std::nullopt;
+    return {};
 }
 
 std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
 {
-    if(cur >= tokens.end()) { throw ParseError(tokens); }
+    if(cur >= tokens.end()) { return {}; }
     if(expect.count(cur->type) > 0) {
         return (cur++)->type;
     }
-    return std::nullopt;
+    return {};
 }
 
 bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
@@ -816,7 +816,6 @@ read-statement ::= READ variable-reference-list // returns void
 data-statement ::= DATA expression-list // returns void
 deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression // returns void
 statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
-statement-list ::= statement {COLON statement} // returns void
 no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
 return-statement ::= RETURN // returns void
 */
@@ -918,10 +917,70 @@ std::optional<Value> ParseInteger(const TokenList& tokens, TokenIterator& cur_, 
 }
 
 // end-statement ::= END // returns void
+bool ParseEndStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == END) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
 // clear-statement ::= CLEAR // returns void
+bool ParseClearStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == CLEAR) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
 // run-statement ::= RUN // returns void
+bool ParseRunStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == RUN) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
 // stop-statement ::= STOP // returns void
+bool ParseStopStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == STOP) {
+        cur_++;
+        return true;
+    }
+    return false;
+}
+
 // goto-statement ::= GOTO integer // returns void
+std::optional<int32_t> ParseGoto(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+    if(cur_->type == GOTO) {
+        // Committed from here, must emit parse error if can't match
+        auto cur = cur_ + 1;
+        if(cur >= end) {
+            throw ParseError(tokens);
+        }
+        if(cur->type != INTEGER) {
+            throw ParseError(tokens, INTEGER, cur - tokens.begin());
+        }
+        state.goto_line = igr(cur->value);
+        cur_ = cur;
+        return true;
+    }
+    return false;
+}
+
+// statement-list ::= statement {COLON statement} // returns void
 
 #if 0
 bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -1064,6 +1123,20 @@ void EvaluateTokens(const TokenList& tokens, State& state)
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
+
+    TokenIterator end = tokens.end();
+    if(ParseEndStatement(tokens, cur, end, state)) {
+        printf("end\n");
+    } else if(ParseClearStatement(tokens, cur, end, state)) {
+        printf("clear\n");
+    } else if(ParseRunStatement(tokens, cur, end, state)) {
+        printf("run\n");
+    } else if(ParseStopStatement(tokens, cur, end, state)) {
+        printf("stop\n");
+    } else if(ParseGoto(tokens, cur, end, state)) {
+        printf("goto %d\n", state.goto_line);
+    }
+    printf("    %zd tokens remaining \n", end - cur);
 
 #if 0
     while(line[cur]) {
