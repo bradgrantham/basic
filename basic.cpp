@@ -897,70 +897,103 @@ std::optional<Value> ParseInteger(const TokenList& tokens, TokenIterator& cur_, 
     return cur_++->value;
 }
 
-// end-statement ::= END // returns void
+bool ParseSingleWordStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state, TokenType expected)
+{
+    auto cur = cur_;
+
+    if(cur >= end || cur_->type != expected) {
+        return false;
+    }
+    cur++;
+
+    // Committed from here, must emit parse error if can't match
+    if(cur >= end) {
+        cur_ = cur;
+        return true;
+    }
+
+    if(cur->type == COLON) {
+        cur++;
+        cur_ = cur;
+        return true;
+    }
+
+    throw ParseError(tokens, cur - tokens.begin());
+}
+
+
+// end-statement ::= END (COLON | end)// returns void
 bool ParseEndStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    if(cur_ >= end) { return false; }
-    if(cur_->type != END) {
-        return false;
+    bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, END);
+    if(succeeded) {
+        // TODO clear variables
     }
-    cur_++;
-    return true;
+    return succeeded;
 }
 
-// clear-statement ::= CLEAR // returns void
+// clear-statement ::= CLEAR (COLON | end)// returns void
 bool ParseClearStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    if(cur_ >= end) { return false; }
-    if(cur_->type != CLEAR) {
-        return false;
+    bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, CLEAR);
+    if(succeeded) {
+        // TODO clear variables
     }
-    cur_++;
-    return true;
+    return succeeded;
 }
 
-// run-statement ::= RUN // returns void
+// run-statement ::= RUN (COLON | end)// returns void
 bool ParseRunStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    if(cur_ >= end) { return false; }
-    if(cur_->type != RUN) {
-        return false;
+    bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, RUN);
+    if(succeeded) {
+        // TODO enter run state
     }
-    cur_++;
-    return true;
+    return succeeded;
 }
 
-// stop-statement ::= STOP // returns void
+// stop-statement ::= STOP (COLON | end) // returns void
 bool ParseStopStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    if(cur_ >= end) { return false; }
-    if(cur_->type != STOP) {
-        return false;
+    bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, STOP);
+    if(succeeded) {
+        // TODO stop run state
     }
-    cur_++;
-    return true;
+    return succeeded;
 }
 
-// goto-statement ::= GOTO integer // returns void
+// goto-statement ::= GOTO integer (COLON | end) // returns void
 std::optional<int32_t> ParseGotoStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    if(cur_ >= end) { return false; }
+    if(cur_ >= end) { return {}; }
 
     if(cur_->type != GOTO) {
         return {};
     }
 
     // Committed from here, must emit parse error if can't match
+
     auto cur = cur_ + 1;
     if(cur >= end) {
         throw ParseError(tokens);
     }
+
     if(cur->type != INTEGER) {
         throw ParseError(tokens, INTEGER, cur - tokens.begin());
     }
-    state.goto_line = igr(cur->value);
-    cur_ = cur;
-    return state.goto_line;
+
+    if(cur >= end) {
+        cur_ = cur;
+        return state.goto_line = igr(cur->value);
+    }
+
+    if(cur->type == COLON) {
+        cur++;
+        cur_ = cur;
+        return state.goto_line = igr(cur->value);
+    }
+
+    throw ParseError(tokens, cur - tokens.begin());
 }
 
 // term ::= number | STRING | variable-reference | function | paren-expression // evaluates using unary-ops, returns Value
@@ -1082,34 +1115,38 @@ bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIter
     // Committed from here, must emit parse error if can't match
     auto cur = cur_ + 1;
 
-    bool cont;
     bool lastWasConcat = false;
-    do {
-        cont = false;
+
+    while(cur < end && cur->type != COLON) {
         if(cur->type == COMMA) {
             Console::Tab(20, state);
             lastWasConcat = true;
-            cont = true;
             cur++;
         } else if(cur->type == SEMICOLON) {
             // skip
             lastWasConcat = true;
-            cont = true;
             cur++;
         } else if(auto results = ParseExpression(tokens, cur, end, state)) {
             Console::Print(to_str(*results), state);
             lastWasConcat = false;
-            cont = true;
+        } else {
+            throw ParseError(tokens, cur - tokens.begin());
         }
-    } while(cont);
+    } 
 
     if(!lastWasConcat) {
         Console::Print("\n", state);
     }
 
+    if(cur->type == COLON) {
+        cur++;
+    }
+
     cur_ = cur;
     return true;
 }
+
+// statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
 
 /* 
 variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
@@ -1135,24 +1172,23 @@ function ::= numeric-function |
 operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
 expression-list ::= expression {COMMA expression} // returns std::vector<Value>
 variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
-let-statement ::= [LET] variable-reference EQUAL expression // returns void
-input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list // returns void
-dim-statement ::= DIM identifier OPEN_PAREN integer-list CLOSE_PAREN // returns void
-if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | statement)] // returns void
-for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers? // returns void
-next-statement ::= NEXT [NUMBER_IDENTIFIER] // returns void
-on-statement ::= ON integer-expression (GOTO | GOSUB) integer-list // returns void
-gosub-statement ::= GOSUB integer // returns void
-wait-statement ::= WAIT numeric-expression // returns void
-width-statement ::= WIDTH numeric-expression // returns void
-order-statement ::= ORDER INTEGER // returns void
-read-statement ::= READ variable-reference-list // returns void
-data-statement ::= DATA expression-list // returns void
-deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression // returns void
-statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
+let-statement ::= [LET] variable-reference EQUAL expression (COLON | end) // returns void
+input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list (COLON | end) // returns void
+dim-statement ::= DIM identifier OPEN_PAREN integer-list CLOSE_PAREN (COLON | end) // returns void
+if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | statement)] (COLON | end) // returns void
+for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] (COLON | end) // Only number identifiers? (COLON | end) // returns void
+next-statement ::= NEXT [NUMBER_IDENTIFIER] (COLON | end) // returns void
+on-statement ::= ON integer-expression (GOTO | GOSUB) integer-list (COLON | end) // returns void
+gosub-statement ::= GOSUB integer (COLON | end) // returns void
+wait-statement ::= WAIT numeric-expression (COLON | end) // returns void
+width-statement ::= WIDTH numeric-expression (COLON | end) // returns void
+order-statement ::= ORDER INTEGER (COLON | end) // returns void
+read-statement ::= READ variable-reference-list (COLON | end) // returns void
+data-statement ::= DATA expression-list (COLON | end) // returns void
+deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression (COLON | end) // returns void
 no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
 return-statement ::= RETURN // returns void
-statement-list ::= statement {COLON statement} // returns void
+statement-list ::= {statement} // returns void
 
 std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect);
 std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect);
