@@ -730,16 +730,23 @@ struct ParseError
     enum {
         UNEXPECTED_END,
         UNEXPECTED,
-        EXPECTED,
+        EXPECTED_TOKEN,
+        EXPECTED_TERM,
     } type;
     TokenType expected_token_type{TOKENTYPE_END};
     TokenList tokens;
     int token{-1};
+    std::string expected_term;
     ParseError(TokenList tokens, TokenType expected_token, int token) :
-        type(EXPECTED),
+        type(EXPECTED_TOKEN),
         expected_token_type(expected_token),
         tokens(tokens),
         token(token)
+    {}
+    ParseError(TokenList tokens, const std::string& expected_term, int token) :
+        type(EXPECTED_TERM),
+        tokens(tokens),
+        expected_term(expected_term)
     {}
     ParseError(TokenList tokens, int token) :
         type(UNEXPECTED),
@@ -776,7 +783,6 @@ bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
 
 /* 
 variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
-term ::= {unary-op} (INTEGER | FLOAT | STRING | variable-reference | function | paren-expression) // evaluates using unary-ops, returns Value
 paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
 numeric-expression ::= expression that is a number // returns double
 integer-expression ::= numeric-expression that is an int // returns int
@@ -818,6 +824,7 @@ deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list C
 statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
 no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
 return-statement ::= RETURN // returns void
+statement-list ::= statement {COLON statement} // returns void
 */
 
 // std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
@@ -975,12 +982,88 @@ std::optional<int32_t> ParseGoto(const TokenList& tokens, TokenIterator& cur_, T
         }
         state.goto_line = igr(cur->value);
         cur_ = cur;
-        return true;
+        return state.goto_line;
     }
-    return false;
+    return {};
 }
 
-// statement-list ::= statement {COLON statement} // returns void
+// term ::= number | STRING | variable-reference | function | paren-expression // evaluates using unary-ops, returns Value
+std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return {}; }
+
+    if(auto results = ParseNumber(tokens, cur_, end)) {
+        return *results;
+    }
+
+    if(cur_->type == STRING) {
+        return cur_++->value;
+    }
+
+#if 0 // XXX
+    if(auto results = ParseVariableReference(tokens, cur_ ,end, state)) {
+        return *results;
+    }
+    if(auto results = ParseFunction(tokens, cur_, end, state)) {
+        return *results;
+    }
+    if(auto results = ParseParenExpression(tokens, cur_, end, state)) {
+        return *results;
+    }
+#endif
+
+    return {};
+}
+
+#if 0
+
+// If cur is a TokenIterator& with value, the value is cur->value
+
+// If contents not optional,
+if(cur_ >= end) { return {}; }
+
+// Make Local Copy
+auto cur = cur_;
+
+// On Success
+cur_ = cur;
+return thing-for-success;
+
+// On failure
+return {};
+
+#endif
+
+// unary-operation ::= {unary-op} term // evaluates using unary-ops, returns Value
+std::optional<Value> ParseUnaryOperation(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return {}; }
+
+    auto cur = cur_;
+    std::vector<TokenType> operators;
+    while(auto unary_op = ParseUnaryOp(tokens, cur, end)) {
+        operators.push_back(*unary_op);
+    }
+
+    if(auto value = ParseTerm(tokens, cur, end, state)) {
+        if(!is_num(*value)) {
+            return {};
+        }
+        double v = num(*value);
+        for(auto it = operators.rbegin(); it != operators.rend(); it++) {
+            switch(*it) {
+                case TokenType::PLUS: break;
+                case TokenType::MINUS: v = -v; break;
+                case TokenType::NOT: v = -1 - static_cast<int>(trunc(v)); break;
+                default: break;
+            }
+        }
+        cur_ = cur;
+        return v;
+    }
+
+    return {};
+}
 
 #if 0
 bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -1045,6 +1128,26 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     /* XXX */ PrintTokenized(tokens);
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseTerm(tokens, cur, end, state)) {
+            printf("term: %s\n", to_str(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = tokens.begin();
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseUnaryOperation(tokens, cur, end, state)) {
+            printf("unary operation: %s\n", to_str(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
 
     {
         TokenIterator cur = tokens.begin();
@@ -1127,16 +1230,20 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     TokenIterator end = tokens.end();
     if(ParseEndStatement(tokens, cur, end, state)) {
         printf("end\n");
+        printf("    %zd tokens remaining \n", end - cur);
     } else if(ParseClearStatement(tokens, cur, end, state)) {
         printf("clear\n");
+        printf("    %zd tokens remaining \n", end - cur);
     } else if(ParseRunStatement(tokens, cur, end, state)) {
         printf("run\n");
+        printf("    %zd tokens remaining \n", end - cur);
     } else if(ParseStopStatement(tokens, cur, end, state)) {
         printf("stop\n");
+        printf("    %zd tokens remaining \n", end - cur);
     } else if(ParseGoto(tokens, cur, end, state)) {
         printf("goto %d\n", state.goto_line);
+        printf("    %zd tokens remaining \n", end - cur);
     }
-    printf("    %zd tokens remaining \n", end - cur);
 
 #if 0
     while(line[cur]) {
@@ -1343,8 +1450,11 @@ int main(int argc, char **argv)
                 case ParseError::UNEXPECTED:
                     printf("unexpected token while parsing\n");
                     break;
-                case ParseError::EXPECTED:
-                    printf("expected %s token while parsing\n", TokenTypeToStringMap[e.expected_token_type]);
+                case ParseError::EXPECTED_TOKEN:
+                    printf("expected %s token at %d while parsing\n", TokenTypeToStringMap[e.expected_token_type], e.token);
+                    break;
+                case ParseError::EXPECTED_TERM:
+                    printf("expected term %s at %d while parsing\n", TokenTypeToStringMap[e.expected_token_type], e.token);
                     break;
             }
             PrintTokenized(e.tokens, e.token);
