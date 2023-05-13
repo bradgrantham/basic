@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cctype>
 #include <string>
+#include <iostream>
 #include <vector>
 #include <set>
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <map>
 
 /*
+all statements must consume either COLON or reach end of tokens 
 replace all character parsing with Token
 use Variant with visit lambda with if-else chain
 do much better error reporting for parsing errors
@@ -509,7 +511,7 @@ TokenList Tokenize(const std::string& line)
         }
 
         auto result = [&]() -> std::optional<std::pair<size_t, TokenType>>{
-            // XXX Could probably make a custom compare that would fit std::map
+            // TODO Could probably make a custom compare that would fit std::map
             for(const auto& [word, result]: StringToToken) {
                 if(str_toupper(line.substr(index, word.size())) == word.c_str()) {
                     return std::make_pair(word.size(), result);
@@ -656,7 +658,7 @@ Value evaluate(TokenType op, std::vector<Value>& operands)
         Value left = pop(operands);
         return num(left) - num(right);
     } else if(op == TAB) {
-	// XXX this is wrong, should add spaces from current location
+	// TODO this is wrong, should add spaces from current location
 	// to the specified next tab stop
         return std::string(static_cast<int>(num(right)), ' ');
     } else if(op == SIN) {
@@ -716,6 +718,27 @@ bool is_higher_precedence(TokenType op1, TokenType op2)
     return is_higher;
 }
 
+std::string to_str(const Value& v)
+{
+    if(is_vref(v)) {
+        auto ref = vref(v);
+        std::string s = ref.name;
+        if(ref.indices.size() > 0) {
+            s = s + "(" + std::to_string(ref.indices[0]);
+            for(auto it = ref.indices.begin() + 1; it < ref.indices.end(); it++) {
+                s = s + ", " + std::to_string(*it);
+            }
+            s = s + ")";
+        }
+        return s;
+    } else if(is_num(v)) {
+        return std::to_string(num(v));
+    } else {
+        return str(v);
+    }
+}
+
+
 struct State
 {
     std::unordered_map<std::string, Value> variables;
@@ -723,6 +746,7 @@ struct State
     int current_line{-1};
     int goto_line{-1};
     bool direct{true};
+    int column{0};
 };
 
 struct ParseError
@@ -780,56 +804,6 @@ bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
 {
     return expect.count(type) > 0;
 }
-
-/* 
-variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
-paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
-numeric-expression ::= expression that is a number // returns double
-integer-expression ::= numeric-expression that is an int // returns int
-string-expression ::= expression resulting in STRING // returns std::string?
-numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
-len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
-val-function ::= VAL OPEN_PAREN string-expression CLOSE_PAREN
-val-function ::= LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
-val-function ::= RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
-val-function ::= MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
-user-function ::= FN NUMBER_IDENTIFIER OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN
-function ::= numeric-function |
-             len-function |
-             val-function |
-             left-function |
-             right-function |
-             mid-function |
-             user-function
-             // evaluates, returns Value
-operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
-expression ::= paren-expression | STRING | operation | function // evaluates, returns Value
-expression-list ::= expression {COMMA expression} // returns std::vector<Value>
-variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
-print-statement ::= PRINT {COMMA | SEMICOLON | expression} // returns void
-let-statement ::= [LET] variable-reference EQUAL expression // returns void
-input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list // returns void
-dim-statement ::= DIM identifier OPEN_PAREN integer-list CLOSE_PAREN // returns void
-if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | statement)] // returns void
-for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers? // returns void
-next-statement ::= NEXT [NUMBER_IDENTIFIER] // returns void
-on-statement ::= ON integer-expression (GOTO | GOSUB) integer-list // returns void
-gosub-statement ::= GOSUB integer // returns void
-wait-statement ::= WAIT numeric-expression // returns void
-width-statement ::= WIDTH numeric-expression // returns void
-order-statement ::= ORDER INTEGER // returns void
-read-statement ::= READ variable-reference-list // returns void
-data-statement ::= DATA expression-list // returns void
-deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression // returns void
-statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
-no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
-return-statement ::= RETURN // returns void
-statement-list ::= statement {COLON statement} // returns void
-*/
-
-// std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
-// std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
-// bool IsOneOf(TokenType type, const std::set<TokenType>& expect)
 
 // identifier ::= NUMBER_IDENTIFIER | STRING_IDENTIFIER // returns optional std::string
 std::optional<Value> ParseIdentifier(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
@@ -917,74 +891,76 @@ std::optional<TokenType> ParseNumericFunctionName(const TokenList& tokens, Token
 std::optional<Value> ParseInteger(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
 {
     if(cur_ >= end) { return {}; }
-    if(cur_->type == INTEGER) {
-        return cur_++->value;
+    if(cur_->type != INTEGER) {
+        return {};
     }
-    return {};
+    return cur_++->value;
 }
 
 // end-statement ::= END // returns void
 bool ParseEndStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     if(cur_ >= end) { return false; }
-    if(cur_->type == END) {
-        cur_++;
-        return true;
+    if(cur_->type != END) {
+        return false;
     }
-    return false;
+    cur_++;
+    return true;
 }
 
 // clear-statement ::= CLEAR // returns void
 bool ParseClearStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     if(cur_ >= end) { return false; }
-    if(cur_->type == CLEAR) {
-        cur_++;
-        return true;
+    if(cur_->type != CLEAR) {
+        return false;
     }
-    return false;
+    cur_++;
+    return true;
 }
 
 // run-statement ::= RUN // returns void
 bool ParseRunStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     if(cur_ >= end) { return false; }
-    if(cur_->type == RUN) {
-        cur_++;
-        return true;
+    if(cur_->type != RUN) {
+        return false;
     }
-    return false;
+    cur_++;
+    return true;
 }
 
 // stop-statement ::= STOP // returns void
 bool ParseStopStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     if(cur_ >= end) { return false; }
-    if(cur_->type == STOP) {
-        cur_++;
-        return true;
+    if(cur_->type != STOP) {
+        return false;
     }
-    return false;
+    cur_++;
+    return true;
 }
 
 // goto-statement ::= GOTO integer // returns void
-std::optional<int32_t> ParseGoto(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+std::optional<int32_t> ParseGotoStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     if(cur_ >= end) { return false; }
-    if(cur_->type == GOTO) {
-        // Committed from here, must emit parse error if can't match
-        auto cur = cur_ + 1;
-        if(cur >= end) {
-            throw ParseError(tokens);
-        }
-        if(cur->type != INTEGER) {
-            throw ParseError(tokens, INTEGER, cur - tokens.begin());
-        }
-        state.goto_line = igr(cur->value);
-        cur_ = cur;
-        return state.goto_line;
+
+    if(cur_->type != GOTO) {
+        return {};
     }
-    return {};
+
+    // Committed from here, must emit parse error if can't match
+    auto cur = cur_ + 1;
+    if(cur >= end) {
+        throw ParseError(tokens);
+    }
+    if(cur->type != INTEGER) {
+        throw ParseError(tokens, INTEGER, cur - tokens.begin());
+    }
+    state.goto_line = igr(cur->value);
+    cur_ = cur;
+    return state.goto_line;
 }
 
 // term ::= number | STRING | variable-reference | function | paren-expression // evaluates using unary-ops, returns Value
@@ -1000,7 +976,7 @@ std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, Tok
         return cur_++->value;
     }
 
-#if 0 // XXX
+#if 0 // TODO
     if(auto results = ParseVariableReference(tokens, cur_ ,end, state)) {
         return *results;
     }
@@ -1014,25 +990,6 @@ std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, Tok
 
     return {};
 }
-
-#if 0
-
-// If cur is a TokenIterator& with value, the value is cur->value
-
-// If contents not optional,
-if(cur_ >= end) { return {}; }
-
-// Make Local Copy
-auto cur = cur_;
-
-// On Success
-cur_ = cur;
-return thing-for-success;
-
-// On failure
-return {};
-
-#endif
 
 // unary-operation ::= {unary-op} term // evaluates using unary-ops, returns Value
 std::optional<Value> ParseUnaryOperation(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -1065,6 +1022,161 @@ std::optional<Value> ParseUnaryOperation(const TokenList& tokens, TokenIterator&
     return {};
 }
 
+// expression ::= paren-expression | STRING | operation | function // evaluates, returns Value
+std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    // XXX for bringup, remove
+    // This way I can test with simple values
+    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
+        return *results;
+    }
+
+    if((cur_ < end) && (cur_->type == STRING)) {
+        return cur_++->value;
+    }
+
+#if 0
+    // TODO
+    if(auto results = ParseParenExpression(tokens, cur_, end, state)) {
+        return *results;
+    }
+    if(auto results = ParseOperation(tokens, cur_, end, state)) {
+        return *results;
+    }
+    if(auto results = ParseFunction(tokens, cur_, end, state)) {
+        return *results;
+    }
+#endif
+
+    return {};
+}
+
+namespace Console
+{
+    void Print(const std::string& str, State& state)
+    {
+        std::cout << str;
+        size_t newline_at = str.find_last_of('\n');
+        if(newline_at == std::string::npos) {
+            state.column += str.size();
+        } else {
+            state.column += str.size() - newline_at;
+        }
+    }
+
+    void Tab(int tabstop, State& state)
+    {
+        int needed = tabstop - state.column % tabstop;
+        std::cout << std::string(needed, ' ');
+    }
+}
+
+// print-statement ::= PRINT {COMMA | SEMICOLON | expression} (COLON | END) // returns void
+bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+
+    if(cur_->type != PRINT) {
+        return false;
+    }
+    // Committed from here, must emit parse error if can't match
+    auto cur = cur_ + 1;
+
+    bool cont;
+    bool lastWasConcat = false;
+    do {
+        cont = false;
+        if(cur->type == COMMA) {
+            Console::Tab(20, state);
+            lastWasConcat = true;
+            cont = true;
+            cur++;
+        } else if(cur->type == SEMICOLON) {
+            // skip
+            lastWasConcat = true;
+            cont = true;
+            cur++;
+        } else if(auto results = ParseExpression(tokens, cur, end, state)) {
+            Console::Print(to_str(*results), state);
+            lastWasConcat = false;
+            cont = true;
+        }
+    } while(cont);
+
+    if(!lastWasConcat) {
+        Console::Print("\n", state);
+    }
+
+    cur_ = cur;
+    return true;
+}
+
+/* 
+variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
+paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
+numeric-expression ::= expression that is a number // returns double
+integer-expression ::= numeric-expression that is an int // returns int
+string-expression ::= expression resulting in STRING // returns std::string?
+numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
+len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
+val-function ::= VAL OPEN_PAREN string-expression CLOSE_PAREN
+val-function ::= LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+val-function ::= RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+val-function ::= MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
+user-function ::= FN NUMBER_IDENTIFIER OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN
+function ::= numeric-function |
+             len-function |
+             val-function |
+             left-function |
+             right-function |
+             mid-function |
+             user-function
+             // evaluates, returns Value
+operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
+expression-list ::= expression {COMMA expression} // returns std::vector<Value>
+variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
+let-statement ::= [LET] variable-reference EQUAL expression // returns void
+input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list // returns void
+dim-statement ::= DIM identifier OPEN_PAREN integer-list CLOSE_PAREN // returns void
+if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | statement)] // returns void
+for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] // Only number identifiers? // returns void
+next-statement ::= NEXT [NUMBER_IDENTIFIER] // returns void
+on-statement ::= ON integer-expression (GOTO | GOSUB) integer-list // returns void
+gosub-statement ::= GOSUB integer // returns void
+wait-statement ::= WAIT numeric-expression // returns void
+width-statement ::= WIDTH numeric-expression // returns void
+order-statement ::= ORDER INTEGER // returns void
+read-statement ::= READ variable-reference-list // returns void
+data-statement ::= DATA expression-list // returns void
+deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression // returns void
+statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
+no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
+return-statement ::= RETURN // returns void
+statement-list ::= statement {COLON statement} // returns void
+
+std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect);
+std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect);
+bool IsOneOf(TokenType type, const std::set<TokenType>& expect);
+
+
+Parse...
+    // If cur is a TokenIterator& with value, the value is cur->value
+
+    // If contents not optional,
+    if(cur_ >= end) { return {}; }
+
+    // Make Local Copy
+    auto cur = cur_;
+
+    // On Success
+    cur_ = cur;
+    return thing-for-success;
+
+    // On failure
+    return {};
+
+*/
+
 #if 0
 bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
@@ -1082,33 +1194,13 @@ bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator
         if(!value) {
             throw ParseError(tokens, cur - tokens.begin()); }
         }
-        // XXX string variables
+        // TODO string variables
         state.variables[str_toupper(str(*results))] = *value;
         return true;
     }
     return false;
 }
 #endif
-
-std::string to_str(const Value& v)
-{
-    if(is_vref(v)) {
-        auto ref = vref(v);
-        std::string s = ref.name;
-        if(ref.indices.size() > 0) {
-            s = s + "(" + std::to_string(ref.indices[0]);
-            for(auto it = ref.indices.begin() + 1; it < ref.indices.end(); it++) {
-                s = s + ", " + std::to_string(*it);
-            }
-            s = s + ")";
-        }
-        return s;
-    } else if(is_num(v)) {
-        return std::to_string(num(v));
-    } else {
-        return str(v);
-    }
-}
 
 void EvaluateTokens(const TokenList& tokens, State& state)
 {
@@ -1120,14 +1212,14 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     bool next_operator_is_unary = true;
 
     if(cur >= tokens.end()) { throw ParseError(tokens); }
-    /* XXX need to re-enable for line numbers */ if(false && cur->type == INTEGER) {
+    /* TODO need to re-enable for line numbers */ if(false && cur->type == INTEGER) {
         int line_number = static_cast<int>(num(tokens.at(0).value));
         auto line = state.program[line_number];
         std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
         return;
     }
 
-    /* XXX */ PrintTokenized(tokens);
+    /* XXX for bringup */ PrintTokenized(tokens);
 
     {
         TokenIterator cur = tokens.begin();
@@ -1240,8 +1332,11 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     } else if(ParseStopStatement(tokens, cur, end, state)) {
         printf("stop\n");
         printf("    %zd tokens remaining \n", end - cur);
-    } else if(ParseGoto(tokens, cur, end, state)) {
+    } else if(ParseGotoStatement(tokens, cur, end, state)) {
         printf("goto %d\n", state.goto_line);
+        printf("    %zd tokens remaining \n", end - cur);
+    } else if(ParsePrintStatement(tokens, cur, end, state)) {
+        printf("print\n");
         printf("    %zd tokens remaining \n", end - cur);
     }
 
