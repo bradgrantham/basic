@@ -17,26 +17,6 @@ do much better error reporting for parsing errors
 
 const bool debug_state = false;
 
-namespace Console
-{
-    void Print(const std::string& str, State& state)
-    {
-        std::cout << str;
-        size_t newline_at = str.find_last_of('\n');
-        if(newline_at == std::string::npos) {
-            state.column += str.size();
-        } else {
-            state.column += str.size() - newline_at;
-        }
-    }
-
-    void Tab(int tabstop, State& state)
-    {
-        int needed = tabstop - state.column % tabstop;
-        std::cout << std::string(needed, ' ');
-    }
-}
-
 
 enum TokenType
 {
@@ -768,6 +748,40 @@ struct State
     int column{0};
 };
 
+namespace Console
+{
+    void Print(const std::string& str, State& state)
+    {
+        std::cout << str;
+        size_t newline_at = str.find_last_of('\n');
+        if(newline_at == std::string::npos) {
+            state.column += str.size();
+        } else {
+            state.column += str.size() - newline_at;
+        }
+    }
+
+    void Tab(int tabstop, State& state)
+    {
+        int needed = tabstop - state.column % tabstop;
+        std::cout << std::string(needed, ' ');
+    }
+}
+
+
+struct ExecutionError
+{
+    enum Type {
+        NOT_IN_RUN_STATE,
+        NOT_IN_DIRECT_STATE,
+    } type;
+    std::string why;
+    ExecutionError(const std::string& why, Type type) :
+        type(type),
+        why(why)
+    {}
+};
+
 struct ParseError
 {
     enum {
@@ -819,6 +833,7 @@ std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, Token
     return {};
 }
 
+// If next token is "expect", then increment pointer and return matched token.
 std::optional<Token> ParseOne(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, TokenType expect)
 {
     if(cur >= tokens.end()) { return {}; }
@@ -975,7 +990,11 @@ bool ParseRunStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterat
 {
     bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, RUN);
     if(succeeded) {
-        // TODO enter run state
+        if(!state.direct) {
+            throw ExecutionError("RUN command", ExecutionError::NOT_IN_DIRECT_STATE);
+        }
+        state.current_line = state.program.begin()->first;
+        state.direct = false;
     }
     return succeeded;
 }
@@ -1335,15 +1354,17 @@ void EvaluateTokens(const TokenList& tokens, State& state)
 
     bool next_operator_is_unary = true;
 
+    /* XXX for bringup */ PrintTokenized(tokens);
+
     if(cur >= tokens.end()) { throw ParseError(tokens); }
     if(cur->type == INTEGER) {
         int line_number = static_cast<int>(num(tokens.at(0).value));
-        auto line = state.program[line_number];
+        auto& line = state.program[line_number];
         std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
+        printf("copied: "); PrintTokenized(line);
+        printf("in map: "); PrintTokenized(state.program[line_number]);
         return;
     }
-
-    /* XXX for bringup */ PrintTokenized(tokens);
 
     {
         TokenIterator cur = tokens.begin();
@@ -1584,38 +1605,6 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         state.variables[ref.name] = value;
     } else if(command == "END") {
         state.direct = true;
-    } else if(command == "RUN") {
-        if(!state.direct) {
-            printf("need to be in direct mode for RUN\n");
-            abort();
-        }
-        state.current_line = state.program.begin()->first;
-        state.direct = false;
-        while(!state.direct) {
-            state.goto_line = -1;
-            evaluate_line(state.program.at(state.current_line).c_str(), state);
-            if(state.direct) {
-                break;
-            }
-            if(state.goto_line == -1) {
-                auto next_line = state.program.find(state.current_line);
-                next_line++;
-                if(next_line == state.program.end()) {
-                    state.direct = true;
-                    break;
-                }
-                // printf("next line from %d yielded %d\n", state.current_line, next_line->first);
-                state.current_line = next_line->first;
-            } else {
-                auto next_line = state.program.find(state.goto_line);
-                if(next_line == state.program.end()) {
-                    printf("unknown line number %d\n", state.current_line);
-                    abort();
-                }
-                // printf("goto %d yielded %d\n", state.goto_line, next_line->first);
-                state.current_line = next_line->first;
-            }
-        }
     } else if(command == "GOTO") {
         if(state.direct) {
             printf("need to be in run mode for GOTO\n");
@@ -1628,21 +1617,69 @@ void EvaluateTokens(const TokenList& tokens, State& state)
 #endif
 }
 
+// TODO handle GOSUB - this should probably be ExecuteNextStatement, so GOSUB can RETURN and continue on next statement on same line
+void ExecuteNextLine(State& state)
+{
+    state.goto_line = -1;
+    EvaluateTokens(state.program.at(state.current_line), state);
+
+    if(state.direct) {
+        // END command
+        return;
+    }
+
+    if(state.goto_line == -1) {
+
+        auto next_line = state.program.find(state.current_line);
+        next_line++;
+        if(next_line == state.program.end()) {
+            // Last line of the program
+            state.direct = true;
+            return;
+        }
+        // printf("next line from %d yielded %d\n", state.current_line, next_line->first);
+        state.current_line = next_line->first;
+
+    } else {
+
+        auto next_line = state.program.find(state.goto_line);
+        if(next_line == state.program.end()) {
+            // TODO: execution error here; unknown line number
+            printf("unknown line number %d\n", state.current_line);
+            abort();
+        }
+        // printf("goto %d yielded %d\n", state.goto_line, next_line->first);
+        state.current_line = next_line->first;
+    }
+}
+
 int main(int argc, char **argv)
 {
-    static char line[512];
     State state;
-    while(fgets(line, sizeof(line), stdin) != nullptr) {
-        line[strlen(line) - 1] = '\0';
+    bool go = true;
 
+    while(go) {
         try {
-            TokenList tokens = Tokenize(line);
-            EvaluateTokens(tokens, state);
-        } catch (const TokenizeError& e) {
-            switch(e.type) {
-                case TokenizeError::SYNTAX:
-                    printf("syntax error at %d (\"%*s\")\n", e.position, std::min(5, (int)(strlen(line) - e.position)), line + e.position);
-                    break;
+            if(state.direct) {
+                static char line[512];
+                if(fgets(line, sizeof(line), stdin) != nullptr) {
+                    line[strlen(line) - 1] = '\0';
+                    TokenList tokens;
+                    try {
+                        tokens = Tokenize(line);
+                    } catch (const TokenizeError& e) {
+                        switch(e.type) {
+                            case TokenizeError::SYNTAX:
+                                printf("syntax error at %d (\"%*s\")\n", e.position, std::min(5, (int)(strlen(line) - e.position)), line + e.position);
+                                break;
+                        }
+                    }
+                    EvaluateTokens(tokens, state);
+                } else {
+                    go = false;
+                }
+            } else {
+                ExecuteNextLine(state);
             }
         } catch (const ParseError& e) {
             switch(e.type) {
@@ -1660,6 +1697,15 @@ int main(int argc, char **argv)
                     break;
             }
             PrintTokenized(e.tokens, e.token);
+        } catch (const ExecutionError& e) {
+            switch(e.type) {
+                case ExecutionError::NOT_IN_RUN_STATE:
+                    printf("RUN state required; %s\n", e.why.c_str());
+                    break;
+                case ExecutionError::NOT_IN_DIRECT_STATE:
+                    printf("DIRECT state required; %s\n", e.why.c_str());
+                    break;
+            }
         }
     }
 }
