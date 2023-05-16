@@ -415,6 +415,7 @@ VariableReference vref(const Value& v) { return std::get<VariableReference>(v); 
 bool is_vref(const Value& v) { return std::holds_alternative<VariableReference>(v); }
 bool is_str(const Value& v) { return std::holds_alternative<std::string>(v); }
 bool is_num(const Value& v) { return std::holds_alternative<double>(v); }
+int32_t is_igr(double v) { return v == static_cast<int32_t>(v); }
 
 
 typedef std::vector<Token> TokenList;
@@ -1093,6 +1094,123 @@ std::optional<TokenType> ParseNumericFunctionName(const TokenList& tokens, Token
     return {};
 }
 
+std::optional<double> ParseNumericExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state);
+
+// numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
+std::optional<Value> ParseNumericFunction(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+
+    auto function = ParseNumericFunctionName(tokens, cur, end);
+    if(!function.has_value()) {
+        return {};
+    }
+
+    if(!ParseOne(tokens, cur, end, state, OPEN_PAREN)) {
+        return {};
+    }
+
+    auto argument = ParseNumericExpression(tokens, cur, end, state);
+    if(!argument.has_value()) {
+        return {};
+    }
+
+    if(!ParseOne(tokens, cur, end, state, CLOSE_PAREN)) {
+        return {};
+    }
+
+    Value v;
+    switch(*function) {
+        case ABS:
+            v = abs(*argument);
+            break;
+        case ATN:
+            v = atan(*argument);
+            break;
+        case COS:
+            v = cos(*argument);
+            break;
+        case EXP:
+            v = exp(*argument);
+            break;
+        case INT:
+            v = trunc(*argument);
+            break;
+        case LOG:
+            v = log(*argument);
+            break;
+        case RND:
+            v = drand48();
+            break;
+        case SGN:
+            v = (*argument) < 0.0 ? -1.0 : ((*argument) > 0.0 ? 1.0 : 0.0);
+            break;
+        case SIN:
+            v = sin(*argument);
+            break;
+        case SQR:
+            v = sqrt(*argument);
+            break;
+        case TAN:
+            v = tan(*argument);
+            break;
+        case TAB:
+            // TODO this is wrong, should add spaces from current location
+            // to the specified next tab stop
+            v = std::string(static_cast<int>(*argument), ' ');
+            break;
+        case CHR: {
+            char c = static_cast<int>(*argument);
+            v = std::string(1, c);
+            break;
+        }
+        case STR:
+            if(is_igr(*argument)) {
+                v = std::to_string(static_cast<int>(*argument));
+            } else {
+                v = std::to_string(*argument);
+            }
+            break;
+        default:
+            // notreached
+            break;
+    }
+
+    cur_ = cur;
+    return v;
+}
+
+// function ::= numeric-function | len-function | val-function | left-function | right-function | mid-function | user-function // evaluates, returns Value
+std::optional<Value> ParseFunction(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(auto value = ParseNumericFunction(tokens, cur_, end, state)) {
+        return value;
+    }
+#if 0
+    // TODO
+    if(auto value = ParseLenFunction(tokens, cur_, end, state)) {
+        return value;
+    }
+    if(auto value = ParseValFunction(tokens, cur_, end, state)) {
+        return value;
+    }
+    if(auto value = ParseLeftFunction(tokens, cur_, end, state)) {
+        return value;
+    }
+    if(auto value = ParseRightFunction(tokens, cur_, end, state)) {
+        return value;
+    }
+    if(auto value = ParseMidFunction(tokens, cur_, end, state)) {
+        return value;
+    }
+    if(auto value = ParseUserFunction(tokens, cur_, end, state)) {
+        return value;
+    }
+#endif
+    return {};
+}
+
+
 // integer ::= INTEGER // returns optional int32_t
 std::optional<Value> ParseInteger(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
 {
@@ -1233,11 +1351,10 @@ std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, Tok
         return EvaluateVariable(*results, state.variables);
     }
 
-#if 0 // TODO
     if(auto results = ParseFunction(tokens, cur_, end, state)) {
         return *results;
     }
-#endif
+
     if(auto results = ParseParenExpression(tokens, cur_, end, state)) {
         return *results;
     }
@@ -1587,21 +1704,12 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
 }
 
 /* 
-numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
 len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
 val-function ::= VAL OPEN_PAREN string-expression CLOSE_PAREN
 left-function ::= LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
 right-function ::= RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
 mid-function ::= MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
 user-function ::= FN NUMBER_IDENTIFIER OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN
-function ::= numeric-function |
-             len-function |
-             val-function |
-             left-function |
-             right-function |
-             mid-function |
-             user-function
-             // evaluates, returns Value
 operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
 expression-list ::= expression {COMMA expression} // returns std::vector<Value>
 variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
@@ -1701,6 +1809,26 @@ void ParseTest(const TokenList& tokens, TokenIterator& cur_, State& state)
 
         if(auto value = ParseParenExpression(tokens, cur, end, state)) {
             printf("Paren expression: %s\n", to_str(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseNumericFunction(tokens, cur, end, state)) {
+            printf("function on numeric argument: %s\n", to_str(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseFunction(tokens, cur, end, state)) {
+            printf("function: %s\n", to_str(*value).c_str());
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
