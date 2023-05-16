@@ -1305,11 +1305,11 @@ std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur
         return cur_++->value;
     }
 
-#if 0
-    // TODO
     if(auto results = ParseParenExpression(tokens, cur_, end, state)) {
         return *results;
     }
+#if 0
+    // TODO
     if(auto results = ParseOperation(tokens, cur_, end, state)) {
         return *results;
     }
