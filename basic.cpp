@@ -10,9 +10,8 @@
 #include <map>
 
 /*
-When possible put in ParseOne
+Unify console output so printing an error moves the column
 use Variant with visit lambda with if-else chain
-do much better error reporting for parsing errors
 */
 
 const bool debug_state = false;
@@ -774,6 +773,7 @@ struct ExecutionError
     enum Type {
         NOT_IN_RUN_STATE,
         NOT_IN_DIRECT_STATE,
+        LINE_NOT_FOUND,
     } type;
     std::string why;
     ExecutionError(const std::string& why, Type type) :
@@ -970,7 +970,10 @@ bool ParseEndStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterat
 {
     bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, END);
     if(succeeded) {
-        // TODO clear variables
+        if(!state.direct) {
+            throw ExecutionError("END command", ExecutionError::NOT_IN_DIRECT_STATE);
+        }
+        state.direct = false;
     }
     return succeeded;
 }
@@ -980,7 +983,7 @@ bool ParseClearStatement(const TokenList& tokens, TokenIterator& cur_, TokenIter
 {
     bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, CLEAR);
     if(succeeded) {
-        // TODO clear variables
+        state.variables.clear();
     }
     return succeeded;
 }
@@ -1004,7 +1007,11 @@ bool ParseStopStatement(const TokenList& tokens, TokenIterator& cur_, TokenItera
 {
     bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, STOP);
     if(succeeded) {
-        // TODO stop run state
+        if(!state.direct) {
+            throw ExecutionError("STOP command", ExecutionError::NOT_IN_DIRECT_STATE);
+        }
+        printf("STOP at line %d\n", state.current_line);
+        state.direct = false;
     }
     return succeeded;
 }
@@ -1027,6 +1034,10 @@ std::optional<int32_t> ParseGotoStatement(const TokenList& tokens, TokenIterator
 
     if(cur->type != INTEGER) {
         throw ParseError(tokens, INTEGER, cur - tokens.begin());
+    }
+
+    if(!state.direct) {
+        throw ExecutionError("GOTO command", ExecutionError::NOT_IN_DIRECT_STATE);
     }
     int goto_line = igr(cur++->value);
 
@@ -1171,6 +1182,7 @@ bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIter
 // statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
 void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
+    // Either this succeeds or throws a parse error
     if(ParseEndStatement(tokens, cur_, end, state)) {
         printf("end\n");
         return;
@@ -1245,6 +1257,7 @@ void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator 
 void ParseStatementList(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     while(cur_ < end) {
+        // Either this succeeds or throws a parse error
         ParseStatement(tokens, cur_, end, state);
     }
 }
@@ -1361,8 +1374,6 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         int line_number = static_cast<int>(num(tokens.at(0).value));
         auto& line = state.program[line_number];
         std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
-        printf("copied: "); PrintTokenized(line);
-        printf("in map: "); PrintTokenized(state.program[line_number]);
         return;
     }
 
@@ -1603,14 +1614,6 @@ void EvaluateTokens(const TokenList& tokens, State& state)
         auto ref = vref(operands.at(0));
         auto value = operands.at(1);
         state.variables[ref.name] = value;
-    } else if(command == "END") {
-        state.direct = true;
-    } else if(command == "GOTO") {
-        if(state.direct) {
-            printf("need to be in run mode for GOTO\n");
-            abort();
-        }
-        state.goto_line = static_cast<int>(trunc(num(operands[0])));
     } else {
         printf("unimplemented command \"%s\"\n", command.c_str());
     }
@@ -1644,13 +1647,18 @@ void ExecuteNextLine(State& state)
 
         auto next_line = state.program.find(state.goto_line);
         if(next_line == state.program.end()) {
-            // TODO: execution error here; unknown line number
-            printf("unknown line number %d\n", state.current_line);
-            abort();
+            throw ExecutionError(std::to_string(state.goto_line), ExecutionError::LINE_NOT_FOUND);
         }
-        // printf("goto %d yielded %d\n", state.goto_line, next_line->first);
         state.current_line = next_line->first;
     }
+}
+
+void StopExecution(State& state)
+{
+    if(!state.direct) {
+        printf("Stopped at line %d\n", state.current_line);
+    }
+    state.direct = true;
 }
 
 int main(int argc, char **argv)
@@ -1697,6 +1705,7 @@ int main(int argc, char **argv)
                     break;
             }
             PrintTokenized(e.tokens, e.token);
+            StopExecution(state);
         } catch (const ExecutionError& e) {
             switch(e.type) {
                 case ExecutionError::NOT_IN_RUN_STATE:
@@ -1705,7 +1714,11 @@ int main(int argc, char **argv)
                 case ExecutionError::NOT_IN_DIRECT_STATE:
                     printf("DIRECT state required; %s\n", e.why.c_str());
                     break;
+                case ExecutionError::LINE_NOT_FOUND:
+                    printf("Line %s not found\n", e.why.c_str());
+                    break;
             }
+            StopExecution(state);
         }
     }
 }
