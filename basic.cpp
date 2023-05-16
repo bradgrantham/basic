@@ -10,15 +10,19 @@
 #include <map>
 
 /*
+all statements should really throw parse errors on !(COLON | end)
+Use C++ exception classes and construct the string?
 Unify console output so printing an error moves the column
 use Variant with visit lambda with if-else chain
 */
 
 const bool debug_state = false;
+const bool debug_statements = false;
 
 
 enum TokenType
 {
+    TEST, // XXX for bringup
     STRING_IDENTIFIER,
     NUMBER_IDENTIFIER,
     DOUBLE,
@@ -221,6 +225,7 @@ std::set<TokenType> commands = {
 
 std::unordered_map<std::string, TokenType> StringToToken =
 {
+    {"TEST", TEST},
     {"<>", NOT_EQUAL},
     {"<=", LESS_THAN_EQUAL},
     {">=", GREATER_THAN_EQUAL},
@@ -289,6 +294,7 @@ std::unordered_map<std::string, TokenType> StringToToken =
 
 std::unordered_map<TokenType, const char *> TokenTypeToStringMap =
 {
+    {TEST, "TEST"},
     {EQUAL, "="},
     {NOT_EQUAL, "<>"},
     {LESS_THAN_EQUAL, "<="},
@@ -378,8 +384,8 @@ std::string str_toupper(std::string s) {
 struct VariableReference
 {
     std::string name;
-    std::vector<int> indices;
-    VariableReference(const std::string& name, const std::vector<int>& indices) :
+    std::vector<int32_t> indices;
+    VariableReference(const std::string& name, const std::vector<int32_t>& indices) :
         name(name),
         indices(indices)
     {}
@@ -541,7 +547,7 @@ void PrintTokenized(const TokenList& tokens, int emphasize = -1)
     int which = 0;
     for(const auto& t: tokens) {
         if(which == emphasize) {
-            printf(" ==>");
+            printf(" >>>");
         }
         switch(t.type) {
             case STRING_IDENTIFIER:
@@ -577,7 +583,7 @@ void PrintTokenized(const TokenList& tokens, int emphasize = -1)
             }
         }
         if(which++ == emphasize) {
-            printf("<== ");
+            printf("<<< ");
         }
     }
     printf("\n");
@@ -736,10 +742,175 @@ std::string to_str(const Value& v)
     }
 }
 
+struct VariableValue
+{
+    // A variable can have both a scalar and an array value
+    // e.g. A = 5: A(0) = 6: PRINT A, A(0) yields "5 6"
+
+    Value scalar;
+    std::vector<int32_t> sizes;
+    std::vector<Value> array;
+
+    void SetArraySizes(const std::vector<int32_t>& sizes_, const Value& init)
+    {
+        sizes = sizes_;
+        int32_t size = 1;
+        for(int32_t s: sizes) {
+            size *= (s + 1);
+        }
+        array.resize(size, init);
+    }
+
+    VariableValue(const Value& v) :
+        scalar(v)
+    {
+    }
+
+    VariableValue(const Value& v, const std::vector<int32_t>& sizes, const Value& init) :
+        scalar(v)
+    {
+        SetArraySizes(sizes, init);
+    }
+
+    VariableValue(const std::vector<int32_t>& sizes, const Value& init)
+    {
+        SetArraySizes(sizes, init);
+    }
+};
+
+typedef std::unordered_map<std::string, VariableValue> VariableMap;
+
+struct VariableReferenceBoundsError
+{
+    std::string var;
+    int32_t index;
+    int32_t size;
+    VariableReferenceBoundsError(const std::string var, int32_t index, int32_t size) :
+        var(var),
+        index(index),
+        size(size)
+    {}
+};
+
+struct VariableDimensionError
+{
+    std::string var;
+    int used;
+    int expected;
+    VariableDimensionError(const std::string var, int used, int expected) :
+        var(var),
+        used(used),
+        expected(expected)
+    {}
+};
+
+struct ExecutionError
+{
+    enum Type {
+        TYPE_MISMATCH,
+        NOT_IN_RUN_STATE,
+        NOT_IN_DIRECT_STATE,
+        LINE_NOT_FOUND,
+        VARIABLE_NOT_FOUND,
+    } type;
+    std::string why;
+    ExecutionError(Type type) :
+        type(type)
+    {}
+    ExecutionError(const std::string& why, Type type) :
+        type(type),
+        why(why)
+    {}
+};
+
+Value EvaluateVariable(const VariableReference& ref, const VariableMap& variables)
+{
+    auto iter = variables.find(ref.name);
+    if(iter == variables.end()) {
+	// XXX it may turn out that referencing an unknown variable
+	// should allocate that variable with default value.
+        throw ExecutionError(ref.name, ExecutionError::VARIABLE_NOT_FOUND);
+    }
+
+    auto& val = iter->second;
+    if(ref.indices.empty()) {
+        return val.scalar;
+    }
+
+    if(val.sizes.size() != ref.indices.size()) {
+        throw VariableDimensionError(ref.name, ref.indices.size(), val.sizes.size());
+    }
+
+    int32_t index = 0;
+    int32_t stride = 1;
+    for(size_t i = 0; i < val.sizes.size(); i++){
+        if(ref.indices[i] > val.sizes[i]) {
+            throw VariableReferenceBoundsError(ref.name, ref.indices[i], val.sizes[i]);
+        }
+        index = index + ref.indices[i] * stride;
+        stride = stride * val.sizes[i];
+    }
+    return val.array[index];
+}
+
+void AllocateVariable(const VariableReference& ref, VariableMap& variables)
+{
+    if(!ref.indices.empty()) {
+        std::vector<int32_t> sizes;
+        for(size_t i = 0; i < ref.indices.size(); i++) {
+            sizes.push_back(10);
+        }
+        if(ref.name[ref.name.size() - 1] == '$') {
+            variables.emplace(std::make_pair(ref.name, VariableValue("", sizes, "")));
+        } else {
+            variables.emplace(std::make_pair(ref.name, VariableValue(0.0, sizes, 0.0)));
+        }
+    } else {
+        if(ref.name[ref.name.size() - 1] == '$') {
+            variables.emplace(std::make_pair(ref.name, VariableValue("")));
+        } else {
+            variables.emplace(std::make_pair(ref.name, VariableValue(0.0)));
+        }
+    }
+}
+
+void AssignVariable(const VariableReference& ref, const Value& value, VariableMap& variables)
+{
+    auto iter = variables.find(ref.name);
+
+    if(iter == variables.end()) {
+        AllocateVariable(ref, variables);
+    } else {
+        VariableValue& vv = variables.at(ref.name);
+        if(!ref.indices.empty()) {
+            if(ref.indices.size() != vv.sizes.size()) {
+                throw VariableDimensionError(ref.name, ref.indices.size(), vv.sizes.size());
+            }
+        }
+    }
+
+    VariableValue& vv = variables.at(ref.name);
+
+    if(!ref.indices.empty()) {
+        int32_t index = 0;
+        int32_t stride = 1;
+        for(size_t i = 0; i < vv.sizes.size(); i++){
+            if(ref.indices[i] > vv.sizes[i]) {
+                throw VariableReferenceBoundsError(ref.name, ref.indices[i], vv.sizes[i]);
+            }
+            index = index + ref.indices[i] * stride;
+            stride = stride * vv.sizes[i];
+        }
+        vv.array[index] = value;
+    } else {
+        vv.scalar = value;
+    }
+}
+
 
 struct State
 {
-    std::unordered_map<std::string, Value> variables;
+    VariableMap variables;
     std::map<int, TokenList> program;
     int current_line{-1};
     int goto_line{-1};
@@ -768,48 +939,40 @@ namespace Console
 }
 
 
-struct ExecutionError
-{
-    enum Type {
-        NOT_IN_RUN_STATE,
-        NOT_IN_DIRECT_STATE,
-        LINE_NOT_FOUND,
-    } type;
-    std::string why;
-    ExecutionError(const std::string& why, Type type) :
-        type(type),
-        why(why)
-    {}
-};
-
 struct ParseError
 {
-    enum {
+    enum Type {
+        TRAILING_TOKENS,
         UNEXPECTED_END,
         UNEXPECTED,
         EXPECTED_TOKEN,
-        EXPECTED_TERM,
+        EXPECTED_RULE,
     } type;
     TokenType expected_token_type{TOKENTYPE_END};
     TokenList tokens;
     int token{-1};
     std::string expected_term;
+
     ParseError(TokenList tokens, TokenType expected_token, int token) :
         type(EXPECTED_TOKEN),
         expected_token_type(expected_token),
         tokens(tokens),
         token(token)
     {}
+
     ParseError(TokenList tokens, const std::string& expected_term, int token) :
-        type(EXPECTED_TERM),
+        type(EXPECTED_RULE),
         tokens(tokens),
         expected_term(expected_term)
     {}
-    ParseError(TokenList tokens, int token) :
-        type(UNEXPECTED),
+
+    // UNEXPECTED or TRAILING_TOKENS
+    ParseError(TokenList tokens, Type type, int token) :
+        type(type),
         tokens(tokens),
         token(token)
     {}
+
     ParseError(TokenList tokens) :
         type(UNEXPECTED_END),
         tokens(tokens)
@@ -961,7 +1124,7 @@ bool ParseSingleWordStatement(const TokenList& tokens, TokenIterator& cur_, Toke
         return true;
     }
 
-    throw ParseError(tokens, cur - tokens.begin());
+    throw ParseError(tokens, ParseError::UNEXPECTED, cur - tokens.begin());
 }
 
 
@@ -970,7 +1133,7 @@ bool ParseEndStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterat
 {
     bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, END);
     if(succeeded) {
-        if(!state.direct) {
+        if(state.direct) {
             throw ExecutionError("END command", ExecutionError::NOT_IN_DIRECT_STATE);
         }
         state.direct = false;
@@ -1007,7 +1170,7 @@ bool ParseStopStatement(const TokenList& tokens, TokenIterator& cur_, TokenItera
 {
     bool succeeded = ParseSingleWordStatement(tokens, cur_, end, state, STOP);
     if(succeeded) {
-        if(!state.direct) {
+        if(state.direct) {
             throw ExecutionError("STOP command", ExecutionError::NOT_IN_DIRECT_STATE);
         }
         printf("STOP at line %d\n", state.current_line);
@@ -1036,7 +1199,7 @@ std::optional<int32_t> ParseGotoStatement(const TokenList& tokens, TokenIterator
         throw ParseError(tokens, INTEGER, cur - tokens.begin());
     }
 
-    if(!state.direct) {
+    if(state.direct) {
         throw ExecutionError("GOTO command", ExecutionError::NOT_IN_DIRECT_STATE);
     }
     int goto_line = igr(cur++->value);
@@ -1046,8 +1209,10 @@ std::optional<int32_t> ParseGotoStatement(const TokenList& tokens, TokenIterator
         return state.goto_line = goto_line;
     }
 
-    throw ParseError(tokens, cur - tokens.begin());
+    throw ParseError(tokens, ParseError::UNEXPECTED, cur - tokens.begin());
 }
+
+std::optional<VariableReference> ParseVariableReference(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state);
 
 // term ::= number | STRING | variable-reference | function | paren-expression // evaluates using unary-ops, returns Value
 std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -1062,10 +1227,11 @@ std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, Tok
         return cur_++->value;
     }
 
-#if 0 // TODO
     if(auto results = ParseVariableReference(tokens, cur_ ,end, state)) {
-        return *results;
+        return EvaluateVariable(*results, state.variables);
     }
+
+#if 0 // TODO
     if(auto results = ParseFunction(tokens, cur_, end, state)) {
         return *results;
     }
@@ -1108,15 +1274,9 @@ std::optional<Value> ParseUnaryOperation(const TokenList& tokens, TokenIterator&
     return {};
 }
 
-// expression ::= paren-expression | STRING | operation | function // evaluates, returns Value
+// expression ::= paren-expression | STRING | operation | function | unary-operation // evaluates, returns Value
 std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    // XXX for bringup, remove
-    // This way I can test with simple values
-    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
-        return *results;
-    }
-
     if((cur_ < end) && (cur_->type == STRING)) {
         return cur_++->value;
     }
@@ -1133,6 +1293,14 @@ std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur
         return *results;
     }
 #endif
+
+    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
+        return *results;
+    }
+
+    if(auto results = ParseTerm(tokens, cur_, end, state)) {
+        return *results;
+    }
 
     return {};
 }
@@ -1163,7 +1331,7 @@ bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIter
             Console::Print(to_str(*results), state);
             lastWasConcat = false;
         } else {
-            throw ParseError(tokens, cur - tokens.begin());
+            throw ParseError(tokens, ParseError::UNEXPECTED, cur - tokens.begin());
         }
     } 
 
@@ -1179,78 +1347,188 @@ bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIter
     return true;
 }
 
+// let-statement ::= [LET] variable-reference EQUAL expression (COLON | end) // returns void
+bool ParseLetStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+    if(cur >= end) { return false; }
+
+    bool committed_to_let = ParseOne(tokens, cur, end, state, LET).has_value();
+    // If we saw "LET", we are committed from here, must emit parse error if can't match
+
+    auto ref = ParseVariableReference(tokens, cur, end, state);
+    if(!ref) {
+        if(committed_to_let) {
+            throw ParseError(tokens, "variable-reference", cur - tokens.begin());
+        } else {
+            return false;
+        }
+    }
+    // Committed from here, must emit parse error if can't match
+
+    if(!ParseOne(tokens, cur, end, state, EQUAL)) {
+        throw ParseError(tokens, EQUAL, cur - tokens.begin());
+    }
+
+    auto value = ParseExpression(tokens, cur, end, state);
+    if(!value) {
+        throw ParseError(tokens, "expression", cur - tokens.begin());
+    }
+    if((ref->name[ref->name.size() - 1] == '$') && !is_str(*value)) {
+        throw ExecutionError(ExecutionError::TYPE_MISMATCH);
+    }
+    if((ref->name[ref->name.size() - 1] != '$') && !is_num(*value)) {
+        throw ExecutionError(ExecutionError::TYPE_MISMATCH);
+    }
+
+    if(cur->type == COLON) {
+        cur++;
+    }
+
+    AssignVariable(*ref, *value, state.variables);
+
+    cur_ = cur;
+    return true;
+}
+
 // statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
 void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     // Either this succeeds or throws a parse error
     if(ParseEndStatement(tokens, cur_, end, state)) {
-        printf("end\n");
+        if(debug_statements) printf("end\n");
         return;
     } else if(ParseClearStatement(tokens, cur_, end, state)) {
-        printf("clear\n");
+        if(debug_statements) printf("clear\n");
         return;
     } else if(ParseRunStatement(tokens, cur_, end, state)) {
-        printf("run\n");
+        if(debug_statements) printf("run\n");
         return;
     } else if(ParseStopStatement(tokens, cur_, end, state)) {
-        printf("stop\n");
+        if(debug_statements) printf("stop\n");
         return;
     } else if(ParseGotoStatement(tokens, cur_, end, state)) {
-        printf("goto %d\n", state.goto_line);
+        if(debug_statements) printf("goto %d\n", state.goto_line);
         return;
     } else if(ParsePrintStatement(tokens, cur_, end, state)) {
-        // print
+        if(debug_statements) printf("print\n");
+        return;
+    } else if(ParseLetStatement(tokens, cur_, end, state)) {
+        if(debug_statements) printf("let\n");
         return;
 #if 0
     // TODO
-    } else if(ParseLetStatement(tokens, cur_, end, state)) {
-        printf("let\n");
-        return;
     } else if(ParseInputStatement(tokens, cur_, end, state)) {
-        printf("input\n");
+        if(debug_statements) printf("input\n");
         return;
     } else if(ParseDimStatement(tokens, cur_, end, state)) {
-        printf("Dim\n");
+        if(debug_statements) printf("Dim\n");
         return;
     } else if(ParseIfStatement(tokens, cur_, end, state)) {
-        printf("If\n");
+        if(debug_statements) printf("If\n");
         return;
     } else if(ParseForStatement(tokens, cur_, end, state)) {
-        printf("For\n");
+        if(debug_statements) printf("For\n");
         return;
     } else if(ParseNextStatement(tokens, cur_, end, state)) {
-        printf("Next\n");
+        if(debug_statements) printf("Next\n");
         return;
     } else if(ParseOnStatement(tokens, cur_, end, state)) {
-        printf("On\n");
+        if(debug_statements) printf("On\n");
         return;
     } else if(ParseGosubStatement(tokens, cur_, end, state)) {
-        printf("Gosub\n");
+        if(debug_statements) printf("Gosub\n");
         return;
     } else if(ParseWaitStatement(tokens, cur_, end, state)) {
-        printf("Wait\n");
+        if(debug_statements) printf("Wait\n");
         return;
     } else if(ParseWidthStatement(tokens, cur_, end, state)) {
-        printf("Width\n");
+        if(debug_statements) printf("Width\n");
         return;
     } else if(ParseOrderStatement(tokens, cur_, end, state)) {
-        printf("Order\n");
+        if(debug_statements) printf("Order\n");
         return;
     } else if(ParseReadStatement(tokens, cur_, end, state)) {
-        printf("Read\n");
+        if(debug_statements) printf("Read\n");
         return;
     } else if(ParseDataStatement(tokens, cur_, end, state)) {
-        printf("Data\n");
+        if(debug_statements) printf("Data\n");
         return;
     } else if(ParseDefStatement(tokens, cur_, end, state)) {
-        printf("Def\n");
+        if(debug_statements) printf("Def\n");
         return;
     } else if(ParseReturnStatement(tokens, cur_, end, state)) {
-        printf("Return\n");
+        if(debug_statements) printf("Return\n");
         return;
 #endif
     }
-    throw ParseError(tokens, cur_ - tokens.begin());
+    throw ParseError(tokens, ParseError::UNEXPECTED, cur_ - tokens.begin());
+}
+
+
+// integer-expression ::= expression that is an integer // returns optional integer
+std::optional<int32_t> ParseIntegerExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+    if(auto results = ParseExpression(tokens, cur, end, state)) {
+        if(is_num(*results) && (num(*results) == igr(*results))) {
+            cur_ = cur;
+            return igr(*results);
+        }
+    }
+    return {};
+}
+
+// numeric-expression ::= expression that is a number // returns optional double
+std::optional<double> ParseNumericExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+    if(auto results = ParseExpression(tokens, cur, end, state)) {
+        if(is_num(*results)) {
+            cur_ = cur;
+            return num(*results);
+        }
+    }
+    return {};
+}
+
+// variable-reference ::= identifier [OPEN_PAREN integer-expression {COMMA integer-expression} CLOSE_PAREN] // returns VariableReference
+std::optional<VariableReference> ParseVariableReference(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+
+    auto identifier = ParseIdentifier(tokens, cur, end);
+    if(!identifier) {
+        return {};
+    }
+
+    if(cur >= end || !ParseOne(tokens, cur, end, state, OPEN_PAREN)) {
+        cur_ = cur;
+        return VariableReference(str(*identifier), {});
+    }
+
+    std::vector<int32_t> indices;
+
+    auto integer = ParseIntegerExpression(tokens, cur, end, state);
+    if(!integer) {
+        return {};
+    }
+    indices.push_back(*integer);
+    while(cur->type == COMMA) {
+        cur++;
+        integer = ParseIntegerExpression(tokens, cur, end, state);
+        if(!integer) {
+            return {};
+        }
+        indices.push_back(*integer);
+    }
+
+    if(cur >= end || !ParseOne(tokens, cur, end, state, CLOSE_PAREN)) {
+        return {};
+    }
+
+    cur_ = cur;
+    return VariableReference(str(*identifier), indices);
 }
 
 // statement-list ::= {statement} // returns void
@@ -1270,17 +1548,15 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
 }
 
 /* 
-variable-reference ::= identifier [OPEN_PAREN numeric-expression {COMMA numeric-expression} CLOSE_PAREN] // returns VariableReference
 paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
-numeric-expression ::= expression that is a number // returns double
-integer-expression ::= numeric-expression that is an int // returns int
+integer-expression ::= expression that is an int // returns int
 string-expression ::= expression resulting in STRING // returns std::string?
 numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
 len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
 val-function ::= VAL OPEN_PAREN string-expression CLOSE_PAREN
-val-function ::= LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
-val-function ::= RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
-val-function ::= MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
+left-function ::= LEFT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+right-function ::= RIGHT OPEN_PAREN string-expression COMMA numeric-expression CLOSE_PAREN
+mid-function ::= MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
 user-function ::= FN NUMBER_IDENTIFIER OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN
 function ::= numeric-function |
              len-function |
@@ -1348,7 +1624,7 @@ bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator
         }
         auto value = ParseExpression(tokens, cur, end, state);
         if(!value) {
-            throw ParseError(tokens, cur - tokens.begin()); }
+            throw ParseError(tokens, ParseError::UNEXPECTED, cur - tokens.begin()); }
         }
         // TODO string variables
         state.variables[str_toupper(str(*results))] = *value;
@@ -1358,27 +1634,47 @@ bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator
 }
 #endif
 
-void EvaluateTokens(const TokenList& tokens, State& state)
+void ParseTest(const TokenList& tokens, TokenIterator& cur_, State& state)
 {
-    TokenIterator cur = tokens.begin();
-    std::vector<Value> operands;
-    std::vector<std::string> operators;
-    std::vector<std::string> unary_operators;
-
-    bool next_operator_is_unary = true;
-
-    /* XXX for bringup */ PrintTokenized(tokens);
-
-    if(cur >= tokens.end()) { throw ParseError(tokens); }
-    if(cur->type == INTEGER) {
-        int line_number = static_cast<int>(num(tokens.at(0).value));
-        auto& line = state.program[line_number];
-        std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
-        return;
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+        if(auto ref = ParseVariableReference(tokens, cur, end, state)) {
+            printf("variable reference: %s", ref->name.c_str());
+            if(!ref->indices.empty()) {
+                printf("(%d", ref->indices.at(0));
+                for(size_t i = 1; i <  ref->indices.size(); i++) {
+                    printf(", %d", ref->indices.at(i));
+                }
+                printf(")");
+            }
+            printf("\n");
+            printf("    %zd tokens remaining \n", end - cur);
+        }
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseIntegerExpression(tokens, cur, end, state)) {
+            printf("integer expression: %s\n", std::to_string(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseNumericExpression(tokens, cur, end, state)) {
+            printf("numeric expression: %s\n", std::to_string(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto value = ParseTerm(tokens, cur, end, state)) {
@@ -1388,7 +1684,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto value = ParseUnaryOperation(tokens, cur, end, state)) {
@@ -1398,7 +1694,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto identifier = ParseIdentifier(tokens, cur, end)) {
@@ -1408,7 +1704,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto number = ParseNumber(tokens, cur, end)) {
@@ -1418,7 +1714,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto integers = ParseIntegerList(tokens, cur, end)) {
@@ -1432,7 +1728,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto integer = ParseInteger(tokens, cur, end)) {
@@ -1442,7 +1738,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto identifiers = ParseNumberIdentifierList(tokens, cur, end)) {
@@ -1456,7 +1752,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto ttype = ParseUnaryOp(tokens, cur, end)) {
@@ -1466,7 +1762,7 @@ void EvaluateTokens(const TokenList& tokens, State& state)
     }
 
     {
-        TokenIterator cur = tokens.begin();
+        TokenIterator cur = cur_;
         TokenIterator end = tokens.end();
 
         if(auto ttype = ParseNumericFunctionName(tokens, cur, end)) {
@@ -1474,10 +1770,40 @@ void EvaluateTokens(const TokenList& tokens, State& state)
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
+}
+
+
+void EvaluateTokens(const TokenList& tokens, State& state)
+{
+    TokenIterator cur = tokens.begin();
+    std::vector<Value> operands;
+    std::vector<std::string> operators;
+    std::vector<std::string> unary_operators;
+
+    bool next_operator_is_unary = true;
+
+    /* XXX for bringup */
+    if(cur->type == TEST) {
+        // XXX special token for testing; skips line number processing
+        cur++;
+        PrintTokenized(tokens);
+        ParseTest(tokens, cur, state);
+        exit(0);
+    }
+
+    if(cur >= tokens.end()) { throw ParseError(tokens); }
+    if(cur->type == INTEGER) {
+        int line_number = static_cast<int>(num(tokens.at(0).value));
+        auto& line = state.program[line_number];
+        std::copy(tokens.begin() + 1, tokens.end(), std::back_inserter(line));
+        return;
+    }
 
     TokenIterator end = tokens.end();
     Parse(tokens, cur, end, state);
-    printf("    %zd tokens remaining \n", end - cur);
+    if(end - cur > 0) {
+        throw ParseError(tokens, ParseError::TRAILING_TOKENS, cur - tokens.begin());
+    }
 
 #if 0
     while(line[cur]) {
@@ -1691,6 +2017,9 @@ int main(int argc, char **argv)
             }
         } catch (const ParseError& e) {
             switch(e.type) {
+                case ParseError::TRAILING_TOKENS:
+                    printf("unrecognized trailing tokens\n");
+                    break;
                 case ParseError::UNEXPECTED_END:
                     printf("unexpected end of tokens while parsing\n");
                     break;
@@ -1700,8 +2029,8 @@ int main(int argc, char **argv)
                 case ParseError::EXPECTED_TOKEN:
                     printf("expected %s token at %d while parsing\n", TokenTypeToStringMap[e.expected_token_type], e.token);
                     break;
-                case ParseError::EXPECTED_TERM:
-                    printf("expected term %s at %d while parsing\n", TokenTypeToStringMap[e.expected_token_type], e.token);
+                case ParseError::EXPECTED_RULE:
+                    printf("expected %s at %d while parsing\n", TokenTypeToStringMap[e.expected_token_type], e.token);
                     break;
             }
             PrintTokenized(e.tokens, e.token);
@@ -1717,7 +2046,20 @@ int main(int argc, char **argv)
                 case ExecutionError::LINE_NOT_FOUND:
                     printf("Line %s not found\n", e.why.c_str());
                     break;
+                case ExecutionError::VARIABLE_NOT_FOUND:
+                    printf("Variable %s not found\n", e.why.c_str());
+                    break;
+                case ExecutionError::TYPE_MISMATCH:
+                    printf("Type mismatch\n");
+                    break;
             }
+            StopExecution(state);
+        } catch (const VariableDimensionError& e) {
+            printf("array access for variable \"%s\" used %d dimensions, expected %d\n", e.var.c_str(), e.used, e.expected);
+            StopExecution(state);
+        } catch (const VariableReferenceBoundsError& e) {
+            printf("variable \"%s\" referenced %d out of array bounds %d\n", e.var.c_str(),
+                e.index, e.size);
             StopExecution(state);
         }
     }
