@@ -1465,6 +1465,19 @@ void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator 
     throw ParseError(tokens, ParseError::UNEXPECTED, cur_ - tokens.begin());
 }
 
+// string-expression ::= expression that is a string // returns optional string
+std::optional<std::string> ParseStringExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+    if(auto results = ParseExpression(tokens, cur, end, state)) {
+        if(is_str(*results)) {
+            cur_ = cur;
+            return str(*results);
+        }
+    }
+    return {};
+}
+
 
 // integer-expression ::= expression that is an integer // returns optional integer
 std::optional<int32_t> ParseIntegerExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
@@ -1549,7 +1562,6 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
 
 /* 
 paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
-integer-expression ::= expression that is an int // returns int
 string-expression ::= expression resulting in STRING // returns std::string?
 numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
 len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
@@ -1609,30 +1621,6 @@ Parse...
 
 */
 
-#if 0
-bool ParseAssignment(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
-{
-    auto cur = cur_;
-    VariableReference reference;
-
-    ParseOptional(tokens, cur, end, {LET});
-
-    if(auto results = ParseAny(tokens, cur, end, state, {STRING_IDENTIFIER, NUMBER_IDENTIFIER}) {
-        variable = str(results->value);
-        if(!ParseOnly(tokens, cur, end, state, EQUAL) {
-            throw ParseError(tokens, EQUAL, cur - tokens.begin()); }
-        }
-        auto value = ParseExpression(tokens, cur, end, state);
-        if(!value) {
-            throw ParseError(tokens, ParseError::UNEXPECTED, cur - tokens.begin()); }
-        }
-        // TODO string variables
-        state.variables[str_toupper(str(*results))] = *value;
-        return true;
-    }
-    return false;
-}
-#endif
 
 void ParseTest(const TokenList& tokens, TokenIterator& cur_, State& state)
 {
@@ -1659,6 +1647,16 @@ void ParseTest(const TokenList& tokens, TokenIterator& cur_, State& state)
 
         if(auto value = ParseIntegerExpression(tokens, cur, end, state)) {
             printf("integer expression: %s\n", std::to_string(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseStringExpression(tokens, cur, end, state)) {
+            printf("string expression: %s\n", value->c_str());
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
