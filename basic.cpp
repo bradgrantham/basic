@@ -1214,6 +1214,8 @@ std::optional<int32_t> ParseGotoStatement(const TokenList& tokens, TokenIterator
 
 std::optional<VariableReference> ParseVariableReference(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state);
 
+std::optional<Value> ParseParenExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state);
+
 // term ::= number | STRING | variable-reference | function | paren-expression // evaluates using unary-ops, returns Value
 std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
@@ -1235,10 +1237,10 @@ std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, Tok
     if(auto results = ParseFunction(tokens, cur_, end, state)) {
         return *results;
     }
+#endif
     if(auto results = ParseParenExpression(tokens, cur_, end, state)) {
         return *results;
     }
-#endif
 
     return {};
 }
@@ -1796,7 +1798,7 @@ void ParseTest(const TokenList& tokens, TokenIterator& cur_, State& state)
         TokenIterator end = tokens.end();
 
         if(auto ttype = ParseUnaryOp(tokens, cur, end)) {
-            printf("unary op %d %s\n", *ttype, TokenTypeToStringMap[*ttype]);
+            printf("unary op %s\n", TokenTypeToStringMap[*ttype]);
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
