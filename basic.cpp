@@ -1274,6 +1274,30 @@ std::optional<Value> ParseUnaryOperation(const TokenList& tokens, TokenIterator&
     return {};
 }
 
+std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state);
+
+// paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
+std::optional<Value> ParseParenExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+
+    if(!ParseOne(tokens, cur, end, state, OPEN_PAREN)) {
+        return {};
+    }
+
+    auto results = ParseExpression(tokens, cur, end, state);
+    if(!results) {
+        return {};
+    }
+
+    if(!ParseOne(tokens, cur, end, state, CLOSE_PAREN)) {
+        return {};
+    }
+
+    cur_ = cur;
+    return results;
+}
+
 // expression ::= paren-expression | STRING | operation | function | unary-operation // evaluates, returns Value
 std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
@@ -1561,8 +1585,6 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
 }
 
 /* 
-paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
-string-expression ::= expression resulting in STRING // returns std::string?
 numeric-function ::= numeric-function-name OPEN_PAREN numeric-expression CLOSE_PAREN  // returns TokenType
 len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
 val-function ::= VAL OPEN_PAREN string-expression CLOSE_PAREN
@@ -1667,6 +1689,26 @@ void ParseTest(const TokenList& tokens, TokenIterator& cur_, State& state)
 
         if(auto value = ParseNumericExpression(tokens, cur, end, state)) {
             printf("numeric expression: %s\n", std::to_string(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseParenExpression(tokens, cur, end, state)) {
+            printf("Paren expression: %s\n", to_str(*value).c_str());
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto value = ParseExpression(tokens, cur, end, state)) {
+            printf("Expression: %s\n", to_str(*value).c_str());
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
