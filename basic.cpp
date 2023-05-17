@@ -1417,23 +1417,6 @@ std::optional<Value> ParseParenExpression(const TokenList& tokens, TokenIterator
     return results;
 }
 
-// expression ::= unary-operation // evaluates, returns Value
-std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
-{
-    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
-        return *results;
-    }
-
-#if 0
-    // TODO
-    if(auto results = ParseOperation(tokens, cur_, end, state)) {
-        return *results;
-    }
-#endif
-
-    return {};
-}
-
 // print-statement ::= PRINT {COMMA | SEMICOLON | expression} (COLON | END) // returns void
 bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
@@ -1703,6 +1686,136 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
 // operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
 // operation is not referenced by any other rule
 // expression ::= unary-operation | term // evaluates, returns Value
+
+/*
+
+I want highest priority to be evaluated first, like "1 + 2 * 3", evaluate "2 * 3" first, so that should be deepest descent.  so first level should match "term + expression" (1 + "2 * 3"), and second level should match "term * expression" (2 * "3"), and third level should match term ("3")
+so e.g. expression := term (PLUS | MULTIPLY | POWER) expression ?
+2 * 3 + 1?  Must match "2 * 3" + term" and then 
+so e.g. expression := (expression PLUS expression) | (expression MULTIPLY expression) | (expression POWER expression) | term?
+ParseOperation(... , operators = {POWER, MULTIPLY, PLUS})
+    Value left, right;
+    auto cur = cur_;
+    if(operators.empty && (left == ParseTerm(...)) {
+        cur_ = cur;
+        return left;
+    }
+    higher_prec = operators;
+    oper = operators.back();
+    higher_prec.pop_back();
+    // yikes lol
+    if((left = ParseOperation(..., higher_prec)) || left = ParseTerm(...))) {
+        if(ParseOne(..., oper)) { 
+            if((right = ParseOperation(..., higher_prec)) || (right = ParseOperation(..., operators))) {
+                Value result = do_operation(left, oper, right)
+                cur_ = cur;
+                return result;
+            }
+        }
+    }
+    cur = cur_
+    if(Value term = ParseTerm(...)) {
+        cur_ = cur;
+        return term;
+    }
+    return {}
+
+*/
+
+Value DoOperation(const Value& left, TokenType oper, const Value& right)
+{
+    switch(oper) {
+        case POWER:
+            // TODO throw TypeMismatch if left and right not numbers
+            return pow(num(left), num(right));
+        case MULTIPLY:
+            // TODO throw TypeMismatch if left and right not numbers
+            return num(left) * num(right);
+        case DIVIDE:
+            // TODO throw TypeMismatch if left and right not numbers
+            return num(left) / num(right);
+        case PLUS:
+            // TODO throw TypeMismatch if left and right not same type
+            if(is_num(left)) {
+                return num(left) + num(right);
+            } else {
+                return str(left) + str(right);
+            }
+        case MINUS:
+            return num(left) - num(right);
+        // TODO others
+        default:
+            // notreached
+            return {0.0f};
+            break;
+    }
+}
+
+int indent = 0;
+std::optional<Value> ParseOperation(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state, const std::vector<TokenType>& operators /* in decreasing precedence */)
+{
+    if(!operators.empty()) {
+        auto cur = cur_;
+        // yikes lol
+        std::vector<TokenType> higher_prec = operators;
+        TokenType oper = operators.back();
+        higher_prec.pop_back();
+        indent += 4;
+        std::optional<Value> left = ParseOperation(tokens, cur, end, state, higher_prec);
+        indent -= 4;
+        if(left) printf("%*sparse left higher-precedence operation succeeded\n", indent, "");
+        if(!left) {
+            indent += 4;
+            left = ParseUnaryOperation(tokens, cur, end, state);
+            indent -= 4;
+            if(left) printf("%*sparse left term succeeded\n", indent, "");
+        }
+        if(left) {
+            indent += 4;
+            if(ParseOne(tokens, cur, end, state, oper)) { 
+                indent -= 4;
+                printf("%*sfound %s\n", indent, "", TokenTypeToStringMap[oper]);
+                indent += 4;
+                std::optional<Value> right = ParseOperation(tokens, cur, end, state, higher_prec);
+                indent -= 4;
+                if(right) printf("%*sparse right higher-precedence operation succeeded\n", indent, "");
+                if(!right) {
+                    indent += 4;
+                    right = ParseOperation(tokens, cur, end, state, operators);
+                    indent -= 4;
+                    if(right) printf("%*sparse right same operation succeeded\n", indent, "");
+                }
+                if(right) {
+                    cur_ = cur;
+                    return DoOperation(*left, oper, *right);
+                }
+            } else indent -= 4;
+        }
+    }
+
+    auto cur = cur_;
+    if(auto term = ParseUnaryOperation(tokens, cur, end, state)) {
+        printf("%*sparse unary succeeded\n", indent, "");
+        cur_ = cur;
+        return term;
+    }
+    return {};
+}
+
+// expression ::= unary-operation // evaluates, returns Value
+std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+
+    if(auto result = ParseOperation(tokens, cur_, end, state, {POWER, MULTIPLY, DIVIDE, PLUS, MINUS, LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, GREATER_THAN_EQUAL, EQUAL, NOT_EQUAL, AND, OR})) {
+        return *result;
+    }
+
+    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
+        return *results;
+    }
+
+    return {};
+}
 
 /* 
 len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
