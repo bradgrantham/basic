@@ -1334,7 +1334,7 @@ std::optional<VariableReference> ParseVariableReference(const TokenList& tokens,
 
 std::optional<Value> ParseParenExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state);
 
-// term ::= number | STRING | variable-reference | function | paren-expression // evaluates using unary-ops, returns Value
+// term ::= number | STRING | variable-reference | function | paren-expression // returns Value
 std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
     if(cur_ >= end) { return {}; }
@@ -1417,33 +1417,19 @@ std::optional<Value> ParseParenExpression(const TokenList& tokens, TokenIterator
     return results;
 }
 
-// expression ::= paren-expression | STRING | operation | function | unary-operation // evaluates, returns Value
+// expression ::= unary-operation // evaluates, returns Value
 std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
-    if((cur_ < end) && (cur_->type == STRING)) {
-        return cur_++->value;
-    }
-
-    if(auto results = ParseParenExpression(tokens, cur_, end, state)) {
+    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
         return *results;
     }
+
 #if 0
     // TODO
     if(auto results = ParseOperation(tokens, cur_, end, state)) {
         return *results;
     }
-    if(auto results = ParseFunction(tokens, cur_, end, state)) {
-        return *results;
-    }
 #endif
-
-    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
-        return *results;
-    }
-
-    if(auto results = ParseTerm(tokens, cur_, end, state)) {
-        return *results;
-    }
 
     return {};
 }
@@ -1702,6 +1688,21 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
     // Either this succeeds or throws a parse error
     ParseStatementList(tokens, cur_, end, state);
 }
+
+// ** I think these are correct:
+// function
+// variable-reference
+// STRING
+// number
+// paren-expression ::= OPEN_PAREN expression CLOSE_PAREN // returns Value
+// print-statement ::= PRINT {COMMA | SEMICOLON | expression} (COLON | END) // returns void
+// unary-operation ::= {unary-op} term // evaluates using unary-ops, returns Value
+// term ::= number | STRING | variable-reference | function | paren-expression // returns Value
+
+// ** Not sure about these
+// operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
+// operation is not referenced by any other rule
+// expression ::= unary-operation | term // evaluates, returns Value
 
 /* 
 len-function ::= LEN OPEN_PAREN string-expression CLOSE_PAREN
