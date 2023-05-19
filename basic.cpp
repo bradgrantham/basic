@@ -605,6 +605,21 @@ auto pop(Q& queue)
     return back;
 }
 
+void dump_state(const std::vector<TokenType>& operators, const std::vector<Value>& operands)
+{
+    printf("[");
+    for(auto op: operators) { printf("\"%s\" ", TokenTypeToStringMap[op]); }
+    printf("] (");
+    for(auto op: operands) {
+        if(is_num(op)) {
+            printf("%f ", num(op));
+        } else {
+            printf("\"%s\" ", str(op).c_str());
+        }
+    }
+    printf(")");
+}
+
 void dump_state(const std::vector<std::string>& operators, const std::vector<Value>& operands)
 {
     printf("[");
@@ -978,6 +993,10 @@ struct ParseError
         type(UNEXPECTED_END),
         tokens(tokens)
     {}
+
+    ParseError(Type type) :
+        type(type)
+    {}
 };
 
 std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect)
@@ -1037,6 +1056,16 @@ std::optional<TokenType> ParseUnaryOp(const TokenList& tokens, TokenIterator& cu
 {
     if(cur_ >= end) { return {}; }
     if(IsOneOf(cur_->type, {PLUS, MINUS, NOT})) {
+        return cur_++->type;
+    }
+    return {};
+}
+
+// binary-operator ::= POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR // returns TokenType
+std::optional<TokenType> ParseBinaryOperator(const TokenList& tokens, TokenIterator& cur_, TokenIterator end)
+{
+    if(cur_ >= end) { return {}; }
+    if(IsOneOf(cur_->type, {POWER, MULTIPLY, DIVIDE, PLUS, MINUS, LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, GREATER_THAN_EQUAL, EQUAL, NOT_EQUAL, AND, OR})) {
         return cur_++->type;
     }
     return {};
@@ -1352,11 +1381,11 @@ std::optional<Value> ParseTerm(const TokenList& tokens, TokenIterator& cur_, Tok
     }
 
     if(auto results = ParseFunction(tokens, cur_, end, state)) {
-        return *results;
+        return results;
     }
 
     if(auto results = ParseParenExpression(tokens, cur_, end, state)) {
-        return *results;
+        return results;
     }
 
     return {};
@@ -1374,8 +1403,15 @@ std::optional<Value> ParseUnaryOperation(const TokenList& tokens, TokenIterator&
     }
 
     if(auto value = ParseTerm(tokens, cur, end, state)) {
-        if(!is_num(*value)) {
+        if(!value) {
             return {};
+        }
+        if(!is_num(*value)) {
+            if(!operators.empty()) {
+                throw ExecutionError(ExecutionError::TYPE_MISMATCH);
+            }
+            cur_ = cur;
+            return value;
         }
         double v = num(*value);
         for(auto it = operators.rbegin(); it != operators.rend(); it++) {
@@ -1687,38 +1723,12 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
 // operation is not referenced by any other rule
 // expression ::= unary-operation | term // evaluates, returns Value
 
-/*
+/* 
 
 I want highest priority to be evaluated first, like "1 + 2 * 3", evaluate "2 * 3" first, so that should be deepest descent.  so first level should match "term + expression" (1 + "2 * 3"), and second level should match "term * expression" (2 * "3"), and third level should match term ("3")
 so e.g. expression := term (PLUS | MULTIPLY | POWER) expression ?
 2 * 3 + 1?  Must match "2 * 3" + term" and then 
-so e.g. expression := (expression PLUS expression) | (expression MULTIPLY expression) | (expression POWER expression) | term?
-ParseOperation(... , operators = {POWER, MULTIPLY, PLUS})
-    Value left, right;
-    auto cur = cur_;
-    if(operators.empty && (left == ParseTerm(...)) {
-        cur_ = cur;
-        return left;
-    }
-    higher_prec = operators;
-    oper = operators.back();
-    higher_prec.pop_back();
-    // yikes lol
-    if((left = ParseOperation(..., higher_prec)) || left = ParseTerm(...))) {
-        if(ParseOne(..., oper)) { 
-            if((right = ParseOperation(..., higher_prec)) || (right = ParseOperation(..., operators))) {
-                Value result = do_operation(left, oper, right)
-                cur_ = cur;
-                return result;
-            }
-        }
-    }
-    cur = cur_
-    if(Value term = ParseTerm(...)) {
-        cur_ = cur;
-        return term;
-    }
-    return {}
+so e.g. expression := term {binary-op term} // evaluate using pair of stacks
 
 */
 
@@ -1745,76 +1755,70 @@ Value DoOperation(const Value& left, TokenType oper, const Value& right)
             return num(left) - num(right);
         // TODO others
         default:
+            abort();
             // notreached
             return {0.0f};
             break;
     }
 }
 
-int indent = 0;
-std::optional<Value> ParseOperation(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state, const std::vector<TokenType>& operators /* in decreasing precedence */)
-{
-    if(!operators.empty()) {
-        auto cur = cur_;
-        // yikes lol
-        std::vector<TokenType> higher_prec = operators;
-        TokenType oper = operators.back();
-        higher_prec.pop_back();
-        indent += 4;
-        std::optional<Value> left = ParseOperation(tokens, cur, end, state, higher_prec);
-        indent -= 4;
-        if(left) printf("%*sparse left higher-precedence operation succeeded\n", indent, "");
-        if(!left) {
-            indent += 4;
-            left = ParseUnaryOperation(tokens, cur, end, state);
-            indent -= 4;
-            if(left) printf("%*sparse left term succeeded\n", indent, "");
-        }
-        if(left) {
-            indent += 4;
-            if(ParseOne(tokens, cur, end, state, oper)) { 
-                indent -= 4;
-                printf("%*sfound %s\n", indent, "", TokenTypeToStringMap[oper]);
-                indent += 4;
-                std::optional<Value> right = ParseOperation(tokens, cur, end, state, higher_prec);
-                indent -= 4;
-                if(right) printf("%*sparse right higher-precedence operation succeeded\n", indent, "");
-                if(!right) {
-                    indent += 4;
-                    right = ParseOperation(tokens, cur, end, state, operators);
-                    indent -= 4;
-                    if(right) printf("%*sparse right same operation succeeded\n", indent, "");
-                }
-                if(right) {
-                    cur_ = cur;
-                    return DoOperation(*left, oper, *right);
-                }
-            } else indent -= 4;
-        }
-    }
-
-    auto cur = cur_;
-    if(auto term = ParseUnaryOperation(tokens, cur, end, state)) {
-        printf("%*sparse unary succeeded\n", indent, "");
-        cur_ = cur;
-        return term;
-    }
-    return {};
-}
-
-// expression ::= unary-operation // evaluates, returns Value
+// binary-operator ::= POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR
+std::optional<TokenType> ParseBinaryOperator(const TokenList& tokens, TokenIterator& cur_, TokenIterator end);
+// expression := unary-operation {binary-operator unary-operation} // evaluate using pair of stacks, return Value
 std::optional<Value> ParseExpression(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
+    std::vector<Value> operands;
+    std::vector<TokenType> operators;
 
-    if(auto result = ParseOperation(tokens, cur_, end, state, {POWER, MULTIPLY, DIVIDE, PLUS, MINUS, LESS_THAN, GREATER_THAN, LESS_THAN_EQUAL, GREATER_THAN_EQUAL, EQUAL, NOT_EQUAL, AND, OR})) {
-        return *result;
+    auto cur = cur_;
+
+    auto left = ParseUnaryOperation(tokens, cur, end, state);
+    if(!left) {
+        return {};
+    }
+    operands.push_back(*left);
+
+    while(auto op = ParseBinaryOperator(tokens, cur, end)) {
+        bool did_a_reduce = false;
+        while(!operators.empty() && is_higher_precedence(operators.back(), *op)) {
+            did_a_reduce = true;
+
+            if(debug_state) { printf("unwinding higher precedence :"); dump_state(operators, operands); puts(""); }
+            // printf("%s is higher precedence than %s\n", higher.c_str(), op.c_str());
+            TokenType higher = pop(operators);
+            Value right = pop(operands); 
+            Value left = pop(operands); 
+            // printf("unwinding %s is higher precedence than %s\n", TokenTypeToStringMap[higher], TokenTypeToStringMap[*op]);
+            // printf("higher precedence reduce : %s %s %s\n", to_str(left).c_str(), TokenTypeToStringMap[higher], to_str(right).c_str());
+            operands.push_back(DoOperation(left, higher, right));
+
+            if(did_a_reduce) {
+                if(debug_state) { printf("after unwinding higher precedence :"); dump_state(operators, operands); puts(""); }
+            }
+        }
+        operators.push_back(*op);
+
+        auto operand = ParseUnaryOperation(tokens, cur, end, state);
+        if(!operand) {
+            return {};
+        }
+        operands.push_back(*operand);
     }
 
-    if(auto results = ParseUnaryOperation(tokens, cur_, end, state)) {
-        return *results;
+    while(!operators.empty()) {
+        if(debug_state) { printf("unwinding final operators :"); dump_state(operators, operands); puts(""); }
+        TokenType op = pop(operators);
+        Value right = pop(operands); 
+        Value left = pop(operands); 
+        // printf("finishing lower-precedence operator %s\n", TokenTypeToStringMap[op]);
+        // printf("final reduce : %s %s %s\n", to_str(left).c_str(), TokenTypeToStringMap[op], to_str(right).c_str());
+        operands.push_back(DoOperation(left, op, right));
     }
 
-    return {};
+    assert(operands.size() == 1);
+
+    cur_ = cur;
+    return operands.back();
 }
 
 /* 
