@@ -1495,6 +1495,25 @@ bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIter
     return true;
 }
 
+// rem-statement ::= [REM] variable-reference EQUAL expression (COLON | end) // returns void
+bool ParseRemStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+    if(cur >= end) { return false; }
+
+    if(cur->type != REMARK) {
+        return {};
+    }
+
+    cur++;
+    if(cur < end) {
+        throw ParseError(tokens, ParseError::TRAILING_TOKENS, cur - tokens.begin());
+    }
+
+    cur_ = cur;
+    return true;
+}
+
 // let-statement ::= [LET] variable-reference EQUAL expression (COLON | end) // returns void
 bool ParseLetStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
@@ -1563,6 +1582,9 @@ void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator 
         return;
     } else if(ParseLetStatement(tokens, cur_, end, state)) {
         if(debug_statements) printf("let\n");
+        return;
+    } else if(ParseRemStatement(tokens, cur_, end, state)) {
+        if(debug_statements) printf("rem\n");
         return;
 #if 0
     // TODO
