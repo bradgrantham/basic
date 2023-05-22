@@ -890,6 +890,15 @@ void AllocateVariable(const VariableReference& ref, VariableMap& variables)
     }
 }
 
+void DimensionVariable(const std::string& identifier, const std::vector<int32_t> sizes, VariableMap& variables)
+{
+    if(identifier[identifier.size() - 1] == '$') {
+        variables.emplace(std::make_pair(identifier, VariableValue("", sizes, "")));
+    } else {
+        variables.emplace(std::make_pair(identifier, VariableValue(0.0, sizes, 0.0)));
+    }
+}
+
 void AssignVariable(const VariableReference& ref, const Value& value, VariableMap& variables)
 {
     auto iter = variables.find(ref.name);
@@ -922,7 +931,6 @@ void AssignVariable(const VariableReference& ref, const Value& value, VariableMa
         vv.scalar = value;
     }
 }
-
 
 struct State
 {
@@ -1495,6 +1503,49 @@ bool ParsePrintStatement(const TokenList& tokens, TokenIterator& cur_, TokenIter
     return true;
 }
 
+// dim-statement ::= DIM identifier OPEN_PAREN integer-list CLOSE_PAREN {COMMA OPEN_PAREN integer-list CLOSE_PAREN} (COLON | end)
+bool ParseDimStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+
+    if(cur_->type != DIM) {
+        return false;
+    }
+    // Committed from here, must emit parse error if can't match
+    auto cur = cur_ + 1;
+
+    bool keepgoing = true;
+    while(keepgoing) {
+        auto identifier = ParseIdentifier(tokens, cur, end);
+        if(!ParseOne(tokens, cur, end, state, OPEN_PAREN)) {
+            printf("%d\n", __LINE__);
+            throw ParseError(tokens, OPEN_PAREN, cur - tokens.begin());
+        }
+
+        auto dimensions = ParseIntegerList(tokens, cur, end);
+        if(!dimensions) {
+            printf("%d\n", __LINE__);
+            throw ParseError(tokens, "integer-list", cur - tokens.begin());
+        }
+
+        if(!ParseOne(tokens, cur, end, state, CLOSE_PAREN)) {
+            printf("%d\n", __LINE__);
+            throw ParseError(tokens, CLOSE_PAREN, cur - tokens.begin());
+        }
+
+        DimensionVariable(str(*identifier), *dimensions, state.variables);
+
+        keepgoing = ParseOne(tokens, cur, end, state, COMMA).has_value();
+    } 
+
+    if(cur < end && cur->type == COLON) {
+        cur++;
+    }
+
+    cur_ = cur;
+    return true;
+}
+
 // rem-statement ::= [REM] variable-reference EQUAL expression (COLON | end) // returns void
 bool ParseRemStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
@@ -1586,13 +1637,13 @@ void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator 
     } else if(ParseRemStatement(tokens, cur_, end, state)) {
         if(debug_statements) printf("rem\n");
         return;
+    } else if(ParseDimStatement(tokens, cur_, end, state)) {
+        if(debug_statements) printf("Dim\n");
+        return;
 #if 0
     // TODO
     } else if(ParseInputStatement(tokens, cur_, end, state)) {
         if(debug_statements) printf("input\n");
-        return;
-    } else if(ParseDimStatement(tokens, cur_, end, state)) {
-        if(debug_statements) printf("Dim\n");
         return;
     } else if(ParseIfStatement(tokens, cur_, end, state)) {
         if(debug_statements) printf("If\n");
@@ -1855,7 +1906,6 @@ expression-list ::= expression {COMMA expression} // returns std::vector<Value>
 variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
 let-statement ::= [LET] variable-reference EQUAL expression (COLON | end) // returns void
 input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list (COLON | end) // returns void
-dim-statement ::= DIM identifier OPEN_PAREN integer-list CLOSE_PAREN (COLON | end) // returns void
 if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | statement)] (COLON | end) // returns void
 for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] (COLON | end) // Only number identifiers? (COLON | end) // returns void
 next-statement ::= NEXT [NUMBER_IDENTIFIER] (COLON | end) // returns void
