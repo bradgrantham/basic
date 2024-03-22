@@ -10,7 +10,7 @@
 #include <map>
 
 /*
-all statements should really throw parse errors on !(COLON | end)
+all statements should throw parse errors on !(COLON | end)
 Use C++ exception classes and construct the string?
 Unify console output so printing an error moves the column
 use Variant with visit lambda with if-else chain
@@ -18,7 +18,6 @@ use Variant with visit lambda with if-else chain
 
 const bool debug_state = false;
 const bool debug_statements = false;
-
 
 enum TokenType
 {
@@ -1029,7 +1028,9 @@ std::optional<Token> ParseOne(const TokenList& tokens, TokenIterator& cur, Token
 {
     if(cur >= tokens.end()) { return {}; }
     if(cur->type == expect) {
-        return (cur++)->type;
+        auto matched = *cur;
+        cur++;
+        return matched;
     }
     return {};
 }
@@ -1609,6 +1610,87 @@ bool ParseLetStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterat
     return true;
 }
 
+// variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
+std::optional<std::vector<VariableReference>> ParseVariableReferenceList(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    auto cur = cur_;
+    std::vector<VariableReference> refs;
+
+    bool keepgoing = false;
+    do {
+        auto reference = ParseVariableReference(tokens, cur, end, state);
+        if(!reference) {
+            return {};
+        }
+        refs.push_back(*reference);
+        printf("got reference\n");
+        auto comma = ParseOne(tokens, cur, end, state, COMMA);
+        printf("%s\n", comma.has_value() ? "comma" : "no comma");
+        keepgoing = comma.has_value();
+    } while(keepgoing);
+
+    printf("done\n");
+    cur_ = cur;
+    return refs;
+}
+
+// input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list (COLON | end) // returns void
+bool ParseInputStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
+{
+    if(cur_ >= end) { return false; }
+
+    if(cur_->type != INPUT) {
+        printf("not input\n");
+        return false;
+    }
+    // Committed from here, must emit parse error if can't match
+    auto cur = cur_ + 1;
+
+    std::string prompt_str;
+    if(auto prompt = ParseOne(tokens, cur, end, state, STRING)) {
+        prompt_str = str(prompt->value);
+        if(!ParseOne(tokens, cur, end, state, SEMICOLON)) {
+            throw ParseError(tokens, STRING, cur - 1 - tokens.begin());
+        }
+    }
+    printf("prompt = \"%s\"\n", prompt_str.c_str());
+
+    auto refs = ParseVariableReferenceList(tokens, cur, end, state);
+    if(!refs) {
+        throw ParseError(tokens, "variable-reference-list", cur - tokens.begin());
+    }
+
+    for(const auto& ref: *refs) {
+        // if buffer is empty, load next input into buffer
+        //     fgets(buffer, ...)
+        //     buffer[strlen(str) - 1] = '\0'
+        //     buffercursor = buffer + skip whitespace 
+        if(ref.name[ref.name.size() - 1] == '$') {
+            // get string input from buffercursor
+            // if '"', get everything to '"'
+            // else get everything to whitespace
+            // incrementing buffercursor
+            // set ref to string value 
+        } else {
+            // number = strtod(buffer, &newbuffer)
+            // buffer - newbuffer
+            // set ref to number value 
+        }
+        // skip whitespace
+        // if comma, skip and skip following whitespace
+    }
+    // if there's extra in the buffer, throw an error
+    // does that mean walking forward to NL?
+
+    if(cur->type == COLON) {
+        cur++;
+    }
+
+    cur_ = cur;
+    return true;
+}
+
+
 // statement ::= ( print-statement | let-statement | input-statement | dim-statement | if-statement | for-statement | next-statement | on-statement | goto-statement | gosub-statement | wait-statement | width-statement | order-statement | read-statement | data-statement | deffn-statement | return-statement | end-statement | clear-statement | run-statement | stop-statement ) // returns void
 void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, State& state)
 {
@@ -1640,11 +1722,11 @@ void ParseStatement(const TokenList& tokens, TokenIterator& cur_, TokenIterator 
     } else if(ParseDimStatement(tokens, cur_, end, state)) {
         if(debug_statements) printf("Dim\n");
         return;
-#if 0
-    // TODO
     } else if(ParseInputStatement(tokens, cur_, end, state)) {
         if(debug_statements) printf("input\n");
         return;
+#if 0
+    // TODO
     } else if(ParseIfStatement(tokens, cur_, end, state)) {
         if(debug_statements) printf("If\n");
         return;
@@ -1796,15 +1878,6 @@ void Parse(const TokenList& tokens, TokenIterator& cur_, TokenIterator end, Stat
 // operation is not referenced by any other rule
 // expression ::= unary-operation | term // evaluates, returns Value
 
-/* 
-
-I want highest priority to be evaluated first, like "1 + 2 * 3", evaluate "2 * 3" first, so that should be deepest descent.  so first level should match "term + expression" (1 + "2 * 3"), and second level should match "term * expression" (2 * "3"), and third level should match term ("3")
-so e.g. expression := term (PLUS | MULTIPLY | POWER) expression ?
-2 * 3 + 1?  Must match "2 * 3" + term" and then 
-so e.g. expression := term {binary-op term} // evaluate using pair of stacks
-
-*/
-
 Value DoOperation(const Value& left, TokenType oper, const Value& right)
 {
     switch(oper) {
@@ -1902,10 +1975,6 @@ right-function ::= RIGHT OPEN_PAREN string-expression COMMA numeric-expression C
 mid-function ::= MID OPEN_PAREN string-expression COMMA numeric-expression [COMMA numeric-expression] CLOSE_PAREN
 user-function ::= FN NUMBER_IDENTIFIER OPEN_PAREN numeric-expression [COMMA numeric-expression] CLOSE_PAREN
 operation ::= expression (POWER | MULTIPLY | DIVIDE | PLUS | MINUS | LESS_THAN | GREATER_THAN | LESS_THAN_EQUAL | GREATER_THAN_EQUAL | EQUAL | NOT_EQUAL | AND | OR) expression // evaluates in correct order, returns Value
-expression-list ::= expression {COMMA expression} // returns std::vector<Value>
-variable-reference-list ::= variable-reference {COMMA | variable-reference} // returns std::vector<VariableReference>
-let-statement ::= [LET] variable-reference EQUAL expression (COLON | end) // returns void
-input-statement ::= INPUT [STRING SEMICOLON] variable-reference-list (COLON | end) // returns void
 if-statement ::= IF expression THEN (integer | statement) [ELSE (integer | statement)] (COLON | end) // returns void
 for-statement ::= FOR NUMBER_IDENTIFIER EQUAL expression TO expression [STEP expression] (COLON | end) // Only number identifiers? (COLON | end) // returns void
 next-statement ::= NEXT [NUMBER_IDENTIFIER] (COLON | end) // returns void
@@ -1915,10 +1984,13 @@ wait-statement ::= WAIT numeric-expression (COLON | end) // returns void
 width-statement ::= WIDTH numeric-expression (COLON | end) // returns void
 order-statement ::= ORDER INTEGER (COLON | end) // returns void
 read-statement ::= READ variable-reference-list (COLON | end) // returns void
-data-statement ::= DATA expression-list (COLON | end) // returns void
 deffn-statement ::= DEF FN NUMBER_IDENTIFIER OPEN_PAREN number-identifier-list CLOSE_PAREN numeric-expression (COLON | end) // returns void
 no need to do this one: line ::= INTEGER statement-list EOL | statement-list EOL // returns void
 return-statement ::= RETURN // returns void
+
+// Needs to be handled in tokenizing and then items between commas used as input
+*** expression-list ::= expression {COMMA expression} // returns std::vector<Value>
+*** data-statement ::= DATA expression-list (COLON | end) // returns void
 
 std::optional<Token> ParseOptional(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect);
 std::optional<Token> ParseAny(const TokenList& tokens, TokenIterator& cur, TokenIterator& end, State& state, const std::set<TokenType>& expect);
@@ -1959,6 +2031,38 @@ void ParseTest(const TokenList& tokens, TokenIterator& cur_, State& state)
                 printf(")");
             }
             printf("\n");
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+        if(auto refs = ParseVariableReferenceList(tokens, cur, end, state)) {
+            printf("variable references: ");
+            for(const auto& ref: *refs) {
+                printf("%s", ref.name.c_str());
+                if(!ref.indices.empty()) {
+                    printf("(%d", ref.indices.at(0));
+                    for(size_t i = 1; i <  ref.indices.size(); i++) {
+                        printf(", %d", ref.indices.at(i));
+                    }
+                    printf(")");
+                }
+                printf(" ");
+            }
+            printf("\n");
+            printf("    %zd tokens remaining \n", end - cur);
+        }
+    }
+
+    {
+        TokenIterator cur = cur_;
+        TokenIterator end = tokens.end();
+
+        if(auto token = ParseOne(tokens, cur, end, state, STRING)) {
+            assert(is_str(token->value));
+            printf("STRING value: %s\n", str(token->value).c_str());
             printf("    %zd tokens remaining \n", end - cur);
         }
     }
